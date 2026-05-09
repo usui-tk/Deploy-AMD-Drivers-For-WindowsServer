@@ -481,7 +481,30 @@ In other words, **PrepareVerify on Win11 24H2 functions as pre-migration verific
 
 5. **Pipeline regression on AWS EPYC** — currently the most accessible substitute for real NPU validation. Run `-Action PrepareVerify -AssumeIfMissing -OfflineZip <path>` weekly on Naples / Milan / Genoa / Turin to catch regressions in the URL-resolution / ZIP-extraction / INF-parsing / signing pipeline.
 
-### 4.3 Pre-flight checklist before running the NPU script anywhere
+### 4.3 Recommended invocation patterns and 4-tier evaluation
+
+The 4-tier URL resolution in `Resolve-AmdNpuDriverUrl` (script line 772) controls how P03 obtains the NPU driver ZIP. The behaviour is **not symmetric across all parameter combinations**, so the table below documents the actual outcome of each invocation pattern. Use this when planning runs.
+
+| # | Invocation | Outcome | Path through 4-tier resolver |
+|---|---|---|---|
+| 1 | `-Action PrepareVerify -CleanWorkRoot -OfflineZip <path>` | ✅ **Recommended for first dry run.** | T4 priority block (line 824) → ZIP copied to workspace → P03 succeeds |
+| 2 | `-Action PrepareVerify -CleanWorkRoot -OfflineZip <path> -AssumeIfMissing` | ✅ **Recommended for AWS EPYC regression.** | Same as #1 plus default Strix Point profile when no NPU detected |
+| 3 | `-Action PrepareVerify -CleanWorkRoot` (no `-OfflineZip`) | ⚠️ **Likely fails on a clean machine.** | T1 skip → T4 priority skip → T2 skip → T3 falls through (HTML form) → T4 auto-scan (script dir, ./cache, workspace, ~/Downloads) → if nothing found, throws |
+| 4 | `-Action Install -OfflineZip <path>` | ✅ **Recommended for real-NPU install.** | T4 priority block → I00 prompts for "I AGREE" → I01-I04 |
+| 5 | `-Action Install -AmdAccountUser ... -AmdAccountPassword ...` | ⚠️ **Best-effort. AMD form changes can break this without notice.** | T1 skip → T4 priority skip → T2 attempts authenticated download → falls back to T3/T4 on failure |
+| 6 | `-Action Install -InstallerUrl <captured-url>` | ✅ Works if the URL is fresh (entitlenow.com URLs expire). | T1 direct download → P03 succeeds |
+| 7 | `-Action Install -NpuOverride STX -PreferredRyzenAiVersion 1.7.1` (no source) | ❌ **Misleading; do not use.** | T1/T2/T3 skip → T4 auto-scan picks up *whatever* `NPU_RAI*_WHQL.zip` is in `~/Downloads` (may not match the override) |
+
+**Why pattern #1 (`PrepareVerify` + `OfflineZip`) is the strongest recommendation**:
+
+- **Deterministic**: the Tier 4 priority block at line 824 short-circuits the resolver immediately. No network calls to AMD, no form-parsing fragility, no race against EULA URL expiry.
+- **System-untouched**: `PrepareVerify` runs P00–P09 + V01–V06 only. No certs imported, no WDAC policy deployed, no drivers installed.
+- **Reproducible across hosts**: copy the same ZIP to a new machine, get the same P05/P06/V05/V06 output. Critical for CI regression testing.
+- **Gives you V05/V06 output**: dry-run install plan and hardware impact analysis are produced even on EPYC EC2 (where `-AssumeIfMissing` is needed because no NPU is present).
+
+**Common pitfall — pattern #7**: switches like `-NpuOverride` and `-PreferredRyzenAiVersion` *modify resolver behaviour but do not provide a download source*. If you specify them without `-OfflineZip` / `-InstallerUrl` / `-AmdAccountUser`, the resolver falls through to Tier 4 auto-scan. Auto-scan picks up whichever `NPU_RAI*_WHQL.zip` it finds first — and that ZIP **may not match the codename or version you tried to override**. The version check happens inside the ZIP's INFs (P05), not against the filename. Always pin the source explicitly.
+
+### 4.4 Pre-flight checklist before running the NPU script anywhere
 
 Even before any of the above gaps are closed, follow this checklist before running the NPU script on **any** host:
 
@@ -494,7 +517,7 @@ Even before any of the above gaps are closed, follow this checklist before runni
 - [ ] If running on a host with BitLocker: you have your recovery key recorded.
 - [ ] You will report results to GitHub Issues regardless of success or failure (especially failure — the maintainers need this data to close the validation gap).
 
-### 4.4 Expected NPU script outputs
+### 4.5 Expected NPU script outputs
 
 These are the outputs you should see when the script runs successfully. Deviation indicates a problem.
 
@@ -596,6 +619,80 @@ To actually use the NPU for AI inference, install Ryzen AI Software:
          cd %RYZEN_AI_INSTALLATION_PATH%\quicktest
          python quicktest.py
 ```
+
+### 4.6 Tier 2 (AMD account auth flow) verification result — 2026-05-10
+
+The `Invoke-AmdAccountAuthentication` function in `Deploy-AMDNpuDriverOnWindowsServer.ps1` was reviewed against the actual AMD account portal on **2026-05-10** to determine whether the implemented HTTP form POST flow can succeed against the current `account.amd.com` back-end. The verification used only public sources (no real AMD account credentials were used).
+
+#### 4.6.1 Method
+
+| Step | What was checked | How |
+|---|---|---|
+| 1 | `account.amd.com` rendering model | Web fetch of related AMD portals (`docs.amd.com/auth/login`, `pensandosupport.amd.com`, `fsdz.amd.com`) |
+| 2 | EULA URL pattern in current AMD docs | GitHub `amd/ryzen-ai-documentation/blob/main/docs/inst.rst` (latest commit) |
+| 3 | Driver-version naming convention | Cross-check between RAI 1.5 / 1.6.1 / 1.7 / 1.7.1 documentation pages on `ryzenai.docs.amd.com` |
+| 4 | End-user behavior of the EULA flow | GitHub `amd/RyzenAI-SW#249`, `#328`, and cnx-software.com end-user blog post (Feb 2024) |
+| 5 | Existence of public PowerShell/Python automation | Web search for `account.amd.com` automation, AMD account download scripting |
+
+#### 4.6.2 Findings
+
+| # | Finding | Severity | Evidence |
+|---|---|---|---|
+| F1 | **`account.amd.com` is a JavaScript-driven SPA.** Related AMD portals return `"JavaScript is required"` or `"Loading application"` HTML stubs on direct fetch. | High | Direct probe of `docs.amd.com/auth/login` and `fsdz.amd.com/adfs/ls/...` |
+| F2 | **Login forms are not present in the initial HTML payload.** CSRF tokens, form actions, and fields are likely injected by JavaScript at runtime. | High | F1 implies the login form is rendered client-side |
+| F3 | **EULA acceptance is interactive.** End users report that they "could not avoid signing the Beta Software EULA" — implying a JS-driven multi-step modal, not a single hidden form POST. | Medium | cnx-software.com testimonial (2024); GitHub #249 (2025) |
+| F4 | **Two distinct EULA URL patterns exist** in AMD's documentation. Original code assumed only one. | Medium | `ryzenai-eula-public-xef.html` for NPU drivers vs `xef.html` for RAI Software EXE / NuGet |
+| F5 | **The default driver/RAI mapping `1.7.1 → 32.0.203.380` was not real.** AMD's RAI 1.7.1 documentation reuses the 1.6.1 driver (`32.0.203.314`) and there is no `NPU_RAI1.7.1_380_WHQL.zip` publicly listed. The script's own comment admitted this was a "placeholder build until AMD publishes". | Medium | Cross-check of `ryzenai.docs.amd.com/en/latest/inst.html` and `github.com/amd/ryzen-ai-documentation/blob/main/docs/inst.rst` |
+| F6 | **No public automation script for AMD account login was found.** Web search returned zero PowerShell/Python implementations that successfully drive the form. | Low | Negative search result; informational |
+
+#### 4.6.3 Conclusion
+
+The `Invoke-AmdAccountAuthentication` function as implemented (HTTP form POST against `https://account.amd.com/en/forms/auth/login.html`) **is highly unlikely to succeed against the current AMD portal**. The portal architecture does not match the assumptions encoded in the function (server-rendered HTML form with hidden CSRF token, simple POST credentials → redirect to authenticated EULA → simple POST EULA accept → redirect to entitlenow.com).
+
+This conclusion was reached without making authenticated requests against AMD's servers — it follows from publicly visible architectural evidence (F1–F3), driver-version inconsistency (F5), and absence of any working public implementation (F6).
+
+#### 4.6.4 Remediation applied to the script
+
+| Change | Description | Location |
+|---|---|---|
+| C1 | **Tier 2 disabled by default.** The function now returns `$null` immediately unless `-ForceAmdAccountAuth` is passed. | `Invoke-AmdAccountAuthentication` (~line 1170) |
+| C2 | **`VERIFIED 2026-05-10` banner** added with explicit "highly unlikely to succeed" warning. | `Invoke-AmdAccountAuthentication` head |
+| C3 | **`-ForceAmdAccountAuth` switch** added to `param()` block. Operators who believe AMD has changed their portal can opt in to test. | Top-level `param()` |
+| C4 | **Default RAI version changed from `1.7.1` (placeholder) to `1.6.1` (verified).** Filename generation now produces `NPU_RAI1.6.1_314_WHQL.zip` matching what AMD actually publishes. | `[string]$PreferredRyzenAiVersion = '1.6.1'`; `Get-AmdNpuPlatform` default; `Get-RecommendedNpuDriverBuild` mapping |
+| C5 | **`Get-RecommendedNpuDriverBuild` mapping corrected.** RAI 1.7 / 1.7.1 entries now both return `32.0.203.314` (the real published driver) instead of fictional `329` / `380` builds. Cross-references to AMD docs are added in the function header. | `Get-RecommendedNpuDriverBuild` |
+| C6 | **All header `.EXAMPLE` filenames** updated from `NPU_RAI1.7.1_380_WHQL.zip` (fictional) to `NPU_RAI1.6.1_314_WHQL.zip` (verified). | Script header lines ~93, 99, 110, 124, 132 |
+| C7 | **Default-Strix profile label** changed from `default-strix-rai1.7.1` to `default-strix-rai1.6.1`. P03 banner reflects the verified driver build. | `Get-AmdNpuPlatform` `$AssumeIfMissing` branch |
+
+#### 4.6.5 What `-ForceAmdAccountAuth` does
+
+When set, the existing form-based POST sequence is attempted unchanged:
+
+```powershell
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
+    -Action Install `
+    -ForceAmdAccountAuth `
+    -AmdAccountUser 'you@example.com' `
+    -AmdAccountPassword (Read-Host 'AMD password' -AsSecureString)
+```
+
+Expected result on the current AMD portal: **failure** at one of the following points (most likely Step 2 or Step 3):
+
+- Step 1 GET EULA page → fetch likely succeeds but no CSRF token in HTML
+- Step 2 POST credentials → likely fails (no form actually exists at the documented URL)
+- Step 3 GET authenticated EULA → likely succeeds but no acceptance form action found
+- Step 4 POST EULA acceptance → likely fails (no form actually exists)
+
+If by some chance AMD has reverted to a server-rendered form, the existing fallback code path handles success; no further changes needed in that case.
+
+#### 4.6.6 Future re-verification
+
+Re-run this verification when:
+
+- AMD announces a new Ryzen AI release (≥ 1.7.2 or 1.8) — driver mapping table may need updates
+- A user reports that `-ForceAmdAccountAuth` now succeeds — Tier 2 can be re-enabled by default
+- A new EULA URL pattern appears in AMD documentation (a third path beyond the two known)
+
+The verification re-run procedure is the same as in 4.6.1: fetch public AMD pages, cross-check EULA URL patterns in `amd/ryzen-ai-documentation` GitHub repository, and check for end-user reports of successful automation.
 
 ---
 

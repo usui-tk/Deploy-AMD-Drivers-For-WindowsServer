@@ -481,7 +481,30 @@ Install 系 phase は自動ブロック (`-AllowWorkstationInstall` で override
 
 5. **AWS EPYC でのパイプライン回帰** — 現時点で実 NPU 検証の代替として最もアクセスしやすい手段。Naples / Milan / Genoa / Turin 上で `-Action PrepareVerify -AssumeIfMissing -OfflineZip <path>` を週次実行し、URL 解決 / ZIP 展開 / INF パース / 署名パイプラインのリグレッションを早期検出する。
 
-### 4.3 NPU スクリプトを実行する前のチェックリスト
+### 4.3 推奨される実行パターンと 4-tier 評価
+
+`Resolve-AmdNpuDriverUrl` (スクリプト 772 行目) の 4-tier URL resolution が P03 の NPU ドライバ ZIP 取得方法を制御します。挙動は **全てのパラメータ組合せで対称ではない**ため、各実行パターンの実際の結果を以下の表に文書化しています。実行計画時の参照に活用してください。
+
+| # | 実行コマンド | 結果 | 4-tier resolver の経由経路 |
+|---|---|---|---|
+| 1 | `-Action PrepareVerify -CleanWorkRoot -OfflineZip <path>` | ✅ **初回 dry-run の推奨パターン。** | T4 priority block (824 行目) → ZIP がワークスペースにコピー → P03 成功 |
+| 2 | `-Action PrepareVerify -CleanWorkRoot -OfflineZip <path> -AssumeIfMissing` | ✅ **AWS EPYC 回帰テストの推奨パターン。** | #1 と同じ + NPU 未検出時に default Strix Point profile で続行 |
+| 3 | `-Action PrepareVerify -CleanWorkRoot` (`-OfflineZip` 無し) | ⚠️ **クリーン環境では失敗する可能性大。** | T1 skip → T4 priority skip → T2 skip → T3 フォールスルー (HTML フォーム) → T4 auto-scan (スクリプトディレクトリ・./cache・workspace・~/Downloads) → 何も見つからなければ throw |
+| 4 | `-Action Install -OfflineZip <path>` | ✅ **実機 NPU インストールの推奨パターン。** | T4 priority block → I00 で "I AGREE" 入力 → I01-I04 |
+| 5 | `-Action Install -AmdAccountUser ... -AmdAccountPassword ...` | ⚠️ **best-effort。AMD のフォーム変更で予告なく破綻する可能性。** | T1 skip → T4 priority skip → T2 認証付きダウンロード試行 → 失敗時 T3/T4 にフォールバック |
+| 6 | `-Action Install -InstallerUrl <captured-url>` | ✅ URL が fresh であれば動作 (entitlenow.com URL は時間経過で失効)。 | T1 直接ダウンロード → P03 成功 |
+| 7 | `-Action Install -NpuOverride STX -PreferredRyzenAiVersion 1.7.1` (ソース無し) | ❌ **誤解を招くため使用しないこと。** | T1/T2/T3 skip → T4 auto-scan が `~/Downloads` 内の任意の `NPU_RAI*_WHQL.zip` を拾う (override 指定と一致するとは限らない) |
+
+**パターン #1 (`PrepareVerify` + `OfflineZip`) が最も強く推奨される理由**:
+
+- **決定論的**: 824 行目の Tier 4 priority block で resolver が即座に短絡判定。AMD へのネットワーク呼び出し無し、フォーム解析の脆弱性無し、EULA URL 失効との競合無し。
+- **システム未変更**: `PrepareVerify` は P00–P09 + V01–V06 のみ実行。証明書 import 無し、WDAC policy deploy 無し、ドライバインストール無し。
+- **ホスト間で再現性あり**: 同じ ZIP を別マシンにコピーすれば、同じ P05/P06/V05/V06 出力が得られる。CI 回帰テストに必須。
+- **V05/V06 出力が取得可能**: EPYC EC2 でも (NPU 不在のため `-AssumeIfMissing` が必要だが) dry-run install plan と hardware impact analysis が出力される。
+
+**よくある落とし穴 — パターン #7**: `-NpuOverride` や `-PreferredRyzenAiVersion` といったスイッチは *resolver の挙動を変更するだけで、ダウンロードソースは提供しません*。`-OfflineZip` / `-InstallerUrl` / `-AmdAccountUser` を併用しないとリゾルバは Tier 4 auto-scan にフォールスルーします。auto-scan は最初に発見した `NPU_RAI*_WHQL.zip` を拾うため、その ZIP が **指定した codename / バージョンと一致するとは限りません**。バージョンチェックは ZIP 内の INF (P05) で行われ、ファイル名では判定されません。**常にソースを明示的に固定してください**。
+
+### 4.4 NPU スクリプトを実行する前のチェックリスト
 
 上記ギャップが埋まる前であっても、**任意のホスト**で NPU スクリプトを実行する前に以下のチェックリストに従ってください:
 
@@ -494,7 +517,7 @@ Install 系 phase は自動ブロック (`-AllowWorkstationInstall` で override
 - [ ] BitLocker 有効ホストで実行する場合: リカバリキー取得済み。
 - [ ] 成功・失敗のいずれの場合も結果を GitHub Issues に報告する意思がある (特に失敗の場合 — メンテナーは検証ギャップを埋めるためにこのデータを必要としている)。
 
-### 4.4 期待される NPU スクリプト出力
+### 4.5 期待される NPU スクリプト出力
 
 以下はスクリプトが正常動作する場合に期待される出力です。これと異なる場合は問題が発生しています。
 
@@ -596,6 +619,80 @@ To actually use the NPU for AI inference, install Ryzen AI Software:
          cd %RYZEN_AI_INSTALLATION_PATH%\quicktest
          python quicktest.py
 ```
+
+### 4.6 Tier 2 (AMD アカウント認証フロー) 動作確認結果 — 2026-05-10
+
+`Deploy-AMDNpuDriverOnWindowsServer.ps1` 内の `Invoke-AmdAccountAuthentication` 関数について、現状の `account.amd.com` バックエンドに対して実装済みの HTTP form POST フローが成功しうるかどうかを **2026-05-10** に検証しました。検証は公開情報のみを利用しています (実 AMD アカウント資格情報は使用していません)。
+
+#### 4.6.1 検証手法
+
+| Step | 確認項目 | 方法 |
+|---|---|---|
+| 1 | `account.amd.com` のレンダリングモデル | 関連 AMD ポータル (`docs.amd.com/auth/login`、`pensandosupport.amd.com`、`fsdz.amd.com`) を web fetch |
+| 2 | 現状の AMD docs における EULA URL パターン | GitHub `amd/ryzen-ai-documentation/blob/main/docs/inst.rst` (最新コミット) |
+| 3 | ドライババージョン命名規則 | `ryzenai.docs.amd.com` 上の RAI 1.5 / 1.6.1 / 1.7 / 1.7.1 ドキュメント間のクロスチェック |
+| 4 | EULA フローのエンドユーザー挙動 | GitHub `amd/RyzenAI-SW#249`、`#328`、cnx-software.com エンドユーザーブログ記事 (Feb 2024) |
+| 5 | 公開されている PowerShell/Python 自動化の有無 | `account.amd.com` 自動化、AMD アカウントダウンロードスクリプティングに関する Web 検索 |
+
+#### 4.6.2 検出事項
+
+| # | 検出事項 | 重大度 | 根拠 |
+|---|---|---|---|
+| F1 | **`account.amd.com` は JavaScript-driven SPA**。関連 AMD ポータルは直接 fetch すると `"JavaScript is required"` または `"Loading application"` HTML stub を返却。 | 高 | `docs.amd.com/auth/login` および `fsdz.amd.com/adfs/ls/...` の直接プローブ |
+| F2 | **ログインフォームは初期 HTML payload に存在しない**。CSRF トークン、フォームアクション、フィールドはランタイムに JavaScript で注入される模様。 | 高 | F1 から、ログインフォームがクライアントサイドレンダリングされていることが導かれる |
+| F3 | **EULA 受諾はインタラクティブ**。エンドユーザー証言「Beta Software EULA への署名を回避できなかった」は、単一の隠れフォーム POST ではなく JS 駆動のマルチステップモーダルを示唆。 | 中 | cnx-software.com 証言 (2024)、GitHub #249 (2025) |
+| F4 | **AMD ドキュメント上 EULA URL パターンが 2 種類存在**。元コードは 1 種類のみと仮定していた。 | 中 | NPU ドライバ用 `ryzenai-eula-public-xef.html` vs RAI Software EXE / NuGet 用 `xef.html` |
+| F5 | **デフォルト driver/RAI マッピング `1.7.1 → 32.0.203.380` が架空**。AMD の RAI 1.7.1 ドキュメントは 1.6.1 driver (`32.0.203.314`) を再利用しており、`NPU_RAI1.7.1_380_WHQL.zip` は公開リストに存在せず。スクリプト自身のコメントが「AMD 公開までの placeholder build」と認めていた。 | 中 | `ryzenai.docs.amd.com/en/latest/inst.html` および `github.com/amd/ryzen-ai-documentation/blob/main/docs/inst.rst` のクロスチェック |
+| F6 | **AMD アカウントログインの公開自動化スクリプトが見つからず**。Web 検索で PowerShell/Python の成功事例ゼロ。 | 低 | 否定的な検索結果、参考情報 |
+
+#### 4.6.3 結論
+
+実装済みの `Invoke-AmdAccountAuthentication` 関数 (`https://account.amd.com/en/forms/auth/login.html` への HTTP form POST) は **現状の AMD ポータルに対して成功する見込みが極めて低い** 。ポータルアーキテクチャは関数が前提とする仕様 (server-rendered HTML form with hidden CSRF token、simple POST credentials → 認証済み EULA へリダイレクト → simple POST EULA accept → entitlenow.com へリダイレクト) と整合していません。
+
+この結論は AMD サーバへの認証付きリクエストを行わずとも、公開可視のアーキテクチャ証拠 (F1〜F3)、driver-version 不整合 (F5)、動作する公開実装の不在 (F6) から導かれます。
+
+#### 4.6.4 スクリプトに適用された改修
+
+| 変更 | 内容 | 適用箇所 |
+|---|---|---|
+| C1 | **Tier 2 をデフォルト無効化**。`-ForceAmdAccountAuth` を渡さない限り関数は即座に `$null` を返す。 | `Invoke-AmdAccountAuthentication` (約 1170 行目) |
+| C2 | **`VERIFIED 2026-05-10` バナー** を追加。「成功する見込みが極めて低い」旨を明示警告。 | `Invoke-AmdAccountAuthentication` 冒頭 |
+| C3 | **`-ForceAmdAccountAuth` スイッチ** を `param()` ブロックに追加。AMD がポータルを変更したと operator が考える場合、opt-in で試行可能。 | トップレベル `param()` |
+| C4 | **デフォルト RAI バージョンを `1.7.1` (placeholder) から `1.6.1` (verified) に変更**。ファイル名生成は AMD が実際に公開する `NPU_RAI1.6.1_314_WHQL.zip` を生成。 | `[string]$PreferredRyzenAiVersion = '1.6.1'`、`Get-AmdNpuPlatform` のデフォルト、`Get-RecommendedNpuDriverBuild` マッピング |
+| C5 | **`Get-RecommendedNpuDriverBuild` マッピングを修正**。RAI 1.7 / 1.7.1 のエントリは両方とも実存する `32.0.203.314` (公開済みドライバ) を返すように変更。架空の `329` / `380` を排除。AMD docs へのクロスリファレンスを関数ヘッダに追加。 | `Get-RecommendedNpuDriverBuild` |
+| C6 | **全ヘッダの `.EXAMPLE` ファイル名** を `NPU_RAI1.7.1_380_WHQL.zip` (架空) から `NPU_RAI1.6.1_314_WHQL.zip` (verified) に更新。 | スクリプトヘッダ 約 93、99、110、124、132 行目 |
+| C7 | **Default-Strix プロファイルラベル** を `default-strix-rai1.7.1` から `default-strix-rai1.6.1` に変更。P03 バナーは verified driver build を反映。 | `Get-AmdNpuPlatform` の `$AssumeIfMissing` 分岐 |
+
+#### 4.6.5 `-ForceAmdAccountAuth` の挙動
+
+設定すると、既存の form ベース POST シーケンスがそのまま試行されます:
+
+```powershell
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
+    -Action Install `
+    -ForceAmdAccountAuth `
+    -AmdAccountUser 'you@example.com' `
+    -AmdAccountPassword (Read-Host 'AMD password' -AsSecureString)
+```
+
+現状の AMD ポータルでの想定結果: **失敗** (以下のいずれかのポイントで、可能性が高いのは Step 2 または Step 3):
+
+- Step 1 EULA ページ GET → fetch は成功するが HTML に CSRF トークン無し
+- Step 2 認証情報 POST → 失敗 (ドキュメント記載の URL に実際のフォームが存在しない)
+- Step 3 認証済み EULA GET → fetch は成功するが受諾フォーム action が見つからず
+- Step 4 EULA 受諾 POST → 失敗 (実際のフォームが存在しない)
+
+万一 AMD が server-rendered form に戻していた場合、既存のフォールバックコードパスが成功を処理するため、その場合の追加変更は不要です。
+
+#### 4.6.6 将来の再検証タイミング
+
+以下のいずれかの条件で、本検証の再実施を推奨します:
+
+- AMD が新規 Ryzen AI リリース (≥ 1.7.2 または 1.8) を発表 — driver マッピングテーブル更新が必要となる可能性
+- ユーザーから `-ForceAmdAccountAuth` の成功報告 — Tier 2 をデフォルト有効に再変更可能
+- AMD ドキュメントに新しい EULA URL パターンが出現 (既知 2 種類以外)
+
+再検証手順は 4.6.1 と同じ: 公開 AMD ページの fetch、`amd/ryzen-ai-documentation` GitHub リポジトリでの EULA URL パターン照合、自動化成功のエンドユーザー報告のチェック。
 
 ---
 

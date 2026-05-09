@@ -166,8 +166,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\Deploy-AMDChipsetDriverOnWindowsServer.ps1  -Action PrepareVerify -CleanWorkRoot
 .\Deploy-AMDGraphicsDriverOnWindowsServer.ps1 -Action PrepareVerify -CleanWorkRoot
 
-# NPU script (only meaningful on a host with a real NPU; on EPYC/AWS you must add -AssumeIfMissing)
-.\Deploy-AMDNpuDriverOnWindowsServer.ps1 -Action PrepareVerify -CleanWorkRoot -AssumeIfMissing
+# NPU script — REQUIRES an offline ZIP (or other download source) to actually run P03.
+# On a clean machine without -OfflineZip, P03 will throw "All 4 download tiers exhausted".
+# See the NPU-specific quick start below for the full pattern.
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 -Action PrepareVerify -CleanWorkRoot `
+    -OfflineZip .\NPU_RAI1.7.1_380_WHQL.zip -AssumeIfMissing
 ```
 
 `PrepareVerify` runs `P00-P09` (download, extract, patch, generate catalog, sign) followed by `V01-V06` (verify artefacts, dry-run install plan, hardware impact analysis). **No system state is modified** — no certs are imported, no WDAC policy is deployed, no drivers are installed. Read the V05 / V06 output to understand exactly what `Install` *would* do.
@@ -209,7 +212,7 @@ The NPU script supports **four download tiers** in priority order:
 | Tier | Method | When to use |
 | --- | --- | --- |
 | **1** | `-InstallerUrl <url>` explicit URL | You already have a fresh AMD CDN URL (e.g. from an `entitlenow.com` link captured in a browser session). |
-| **2** | `-AmdAccountUser <email> -AmdAccountPassword <SecureString>` | You want the script to drive the EULA acceptance flow automatically. **Best-effort; can break without notice when AMD changes their forms.** |
+| **2** | `-AmdAccountUser <email> -AmdAccountPassword <SecureString> -ForceAmdAccountAuth` | Attempt EULA acceptance flow automatically. **❌ Disabled by default since 2026-05-10 verification found `account.amd.com` is a JavaScript-driven SPA. Use `-ForceAmdAccountAuth` to opt in (expected to fail on the current AMD portal).** See TESTING.md §4.6 for the full verification report. |
 | **3** | EULA-gated direct fetch probe | Automatic; almost always falls through (AMD requires JS-driven submission). |
 | **4** ★ | `-OfflineZip <path>` or sibling `NPU_RAI*_WHQL.zip` in the script directory | **Recommended.** Manually download the ZIP once, place it next to the script. Reproducible across runs. |
 
@@ -221,8 +224,12 @@ For Tier 4, manually download the ZIP from the AMD documentation page:
 
 ### Step 2 — dry run (no system state modified)
 
+The recommended pattern is **`-Action PrepareVerify` + `-OfflineZip`**. With `-OfflineZip`, the 4-tier resolution short-circuits at the Tier 4 priority block (line 824 of the script) and your local ZIP is used immediately — no AMD network calls, no form-parsing fragility.
+
 ```powershell
-# On a real NPU host (Ryzen AI 300 / AI Max 300 / 7040 / 8040 series)
+# RECOMMENDED — pipeline soundness check, system state UNCHANGED.
+# OfflineZip is taken from the Tier 4 priority block immediately; no AMD network calls.
+# On a real NPU host (Ryzen AI 300 / AI Max 300 / 7040 / 8040 series):
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action PrepareVerify `
     -CleanWorkRoot `
@@ -230,7 +237,9 @@ For Tier 4, manually download the ZIP from the AMD documentation page:
 ```
 
 ```powershell
-# On a non-NPU host (e.g. AWS EPYC EC2 for pipeline regression test)
+# RECOMMENDED for AWS EPYC pipeline regression — same as above plus -AssumeIfMissing.
+# When P03 detects no NPU device, the script falls back to the default Strix Point profile
+# instead of failing. Useful only for testing the pipeline mechanics; produces 0 device bindings.
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action PrepareVerify `
     -CleanWorkRoot `
@@ -238,9 +247,23 @@ For Tier 4, manually download the ZIP from the AMD documentation page:
     -AssumeIfMissing                            # default Strix Point + RAI 1.7.1
 ```
 
+```powershell
+# DISCOURAGED — pipeline check WITHOUT -OfflineZip on a clean machine.
+# This command will:
+#   Tier 1 (-InstallerUrl)            : skipped (not provided)
+#   Tier 4 priority (-OfflineZip)     : skipped (not provided)
+#   Tier 2 (AMD account auto-download): skipped (no credentials)
+#   Tier 3 (EULA-gated direct probe)  : almost always falls through (HTML form)
+#   Tier 4 auto-scan                  : checks script dir, ./cache, workspace, ~/Downloads
+# If -CleanWorkRoot has wiped the workspace AND no NPU_RAI*_WHQL.zip is in any of the
+# auto-scan locations, P03 will throw "All 4 download tiers exhausted".
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 -Action PrepareVerify -CleanWorkRoot
+```
+
 ### Step 3 — install (only if you have real NPU hardware AND have read all warnings)
 
 ```powershell
+# RECOMMENDED — full install using a manually-downloaded offline ZIP.
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action Install `
     -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip
@@ -255,20 +278,35 @@ After successful installation, the script prints a guidance block reminding you 
 
 ### Useful NPU-specific switches
 
+These switches **modify behaviour but do not provide a download source** by themselves. Always combine them with `-OfflineZip`, `-InstallerUrl`, or `-AmdAccountUser`/`-AmdAccountPassword` (Tier 4 / Tier 1 / Tier 2 respectively).
+
 ```powershell
 # Force a specific NPU codename (when CPU name detection is ambiguous; e.g. PHX vs HPT)
--NpuOverride STX              # PHX | HPT | STX | KRK
+# Combine with -OfflineZip for predictable behaviour:
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
+    -Action PrepareVerify `
+    -OfflineZip .\NPU_RAI1.7.1_380_WHQL.zip `
+    -NpuOverride STX                 # PHX | HPT | STX | KRK
 
-# Force a specific Ryzen AI version target
--PreferredRyzenAiVersion 1.6.1   # 1.5 | 1.6.1 | 1.7 | 1.7.1 (default)
+# Force a specific Ryzen AI version target. Note that PreferredRyzenAiVersion
+# must match the OfflineZip you supply (or the URL you supply) — the switch only
+# affects which INF subset P05 selects, not which ZIP gets fetched:
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
+    -Action Install `
+    -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
+    -PreferredRyzenAiVersion 1.6.1   # 1.5 | 1.6.1 | 1.7 | 1.7.1 (default)
 
-# AMD account auto-download (Tier 2)
+# AMD account auto-download (Tier 2 — DISABLED by default since 2026-05-10 verification.
+# Pass -ForceAmdAccountAuth to opt in. Expected to fail on current AMD SPA portal.)
 $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD account password'
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action Install `
+    -ForceAmdAccountAuth `
     -AmdAccountUser $cred.UserName `
     -AmdAccountPassword $cred.Password
 ```
+
+> **Common pitfall**: running `-Action Install -NpuOverride STX -PreferredRyzenAiVersion 1.7.1` **without** specifying any download source will fall through to Tier 4 auto-scan and silently use whatever `NPU_RAI*_WHQL.zip` happens to be in `~/Downloads` — which may or may not match the codename / version you specified. **Always pin the source explicitly**.
 
 ---
 
