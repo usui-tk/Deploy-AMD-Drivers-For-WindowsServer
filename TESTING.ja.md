@@ -493,7 +493,7 @@ Install 系 phase は自動ブロック (`-AllowWorkstationInstall` で override
 | 4 | `-Action Install -OfflineZip <path>` | ✅ **実機 NPU インストールの推奨パターン。** | T4 priority block → I00 で "I AGREE" 入力 → I01-I04 |
 | 5 | `-Action Install -AmdAccountUser ... -AmdAccountPassword ...` | ⚠️ **best-effort。AMD のフォーム変更で予告なく破綻する可能性。** | T1 skip → T4 priority skip → T2 認証付きダウンロード試行 → 失敗時 T3/T4 にフォールバック |
 | 6 | `-Action Install -InstallerUrl <captured-url>` | ✅ URL が fresh であれば動作 (entitlenow.com URL は時間経過で失効)。 | T1 直接ダウンロード → P03 成功 |
-| 7 | `-Action Install -NpuOverride STX -PreferredRyzenAiVersion 1.7.1` (ソース無し) | ❌ **誤解を招くため使用しないこと。** | T1/T2/T3 skip → T4 auto-scan が `~/Downloads` 内の任意の `NPU_RAI*_WHQL.zip` を拾う (override 指定と一致するとは限らない) |
+| 7 | `-Action Install -NpuOverride STX -NpuDriverPackage NPU_RAI1.6.1_314` (ソース無し) | ❌ **誤解を招くため使用しないこと。** | T1/T2/T3 skip → T4 auto-scan が `~/Downloads` 内の任意の `NPU_RAI*_WHQL.zip` を拾う (override 指定と一致するとは限らない) |
 
 **パターン #1 (`PrepareVerify` + `OfflineZip`) が最も強く推奨される理由**:
 
@@ -502,7 +502,7 @@ Install 系 phase は自動ブロック (`-AllowWorkstationInstall` で override
 - **ホスト間で再現性あり**: 同じ ZIP を別マシンにコピーすれば、同じ P05/P06/V05/V06 出力が得られる。CI 回帰テストに必須。
 - **V05/V06 出力が取得可能**: EPYC EC2 でも (NPU 不在のため `-AssumeIfMissing` が必要だが) dry-run install plan と hardware impact analysis が出力される。
 
-**よくある落とし穴 — パターン #7**: `-NpuOverride` や `-PreferredRyzenAiVersion` といったスイッチは *resolver の挙動を変更するだけで、ダウンロードソースは提供しません*。`-OfflineZip` / `-InstallerUrl` / `-AmdAccountUser` を併用しないとリゾルバは Tier 4 auto-scan にフォールスルーします。auto-scan は最初に発見した `NPU_RAI*_WHQL.zip` を拾うため、その ZIP が **指定した codename / バージョンと一致するとは限りません**。バージョンチェックは ZIP 内の INF (P05) で行われ、ファイル名では判定されません。**常にソースを明示的に固定してください**。
+**よくある落とし穴 — パターン #7**: `-NpuOverride`、`-NpuDriverPackage`、`-RyzenAiSoftwareVersion` といったスイッチは *resolver の挙動を変更するだけで、ダウンロードソースは提供しません*。`-OfflineZip` / `-InstallerUrl` / `-AmdAccountUser` を併用しないとリゾルバは Tier 4 auto-scan にフォールスルーします。auto-scan は最初に発見した `NPU_RAI*_WHQL.zip` を拾うため、その ZIP が **指定した codename / バージョンと一致するとは限りません**。バージョンチェックは ZIP 内の INF (P05) で行われ、ファイル名では判定されません。**常にソースを明示的に固定してください**。
 
 ### 4.4 NPU スクリプトを実行する前のチェックリスト
 
@@ -658,7 +658,7 @@ To actually use the NPU for AI inference, install Ryzen AI Software:
 | C1 | **Tier 2 をデフォルト無効化**。`-ForceAmdAccountAuth` を渡さない限り関数は即座に `$null` を返す。 | `Invoke-AmdAccountAuthentication` (約 1170 行目) |
 | C2 | **`VERIFIED 2026-05-10` バナー** を追加。「成功する見込みが極めて低い」旨を明示警告。 | `Invoke-AmdAccountAuthentication` 冒頭 |
 | C3 | **`-ForceAmdAccountAuth` スイッチ** を `param()` ブロックに追加。AMD がポータルを変更したと operator が考える場合、opt-in で試行可能。 | トップレベル `param()` |
-| C4 | **デフォルト RAI バージョンを `1.7.1` (placeholder) から `1.6.1` (verified) に変更**。ファイル名生成は AMD が実際に公開する `NPU_RAI1.6.1_314_WHQL.zip` を生成。 | `[string]$PreferredRyzenAiVersion = '1.6.1'`、`Get-AmdNpuPlatform` のデフォルト、`Get-RecommendedNpuDriverBuild` マッピング |
+| C4 | **バージョニングを完全分離**。単一パラメータ `-PreferredRyzenAiVersion` (driver と software を 1 つのスイッチで混在管理) を、独立した 2 パラメータに分離: `-NpuDriverPackage` (default `latest` = `NPU_RAI1.6.1_314`) と `-RyzenAiSoftwareVersion` (default `latest` = `1.7.1`)。ファイル名生成は AMD が実際に公開する `NPU_RAI1.6.1_314_WHQL.zip` を生成。A 軸と B 軸の互換性は別軸で評価。 | `[string]$NpuDriverPackage = 'latest'`、`[string]$RyzenAiSoftwareVersion = 'latest'`、新規関数 `Get-NpuDriverPackageInfo`、`Get-LatestRyzenAiSoftwareInfo`、`Test-NpuDriverRaiCompatibility` |
 | C5 | **`Get-RecommendedNpuDriverBuild` マッピングを修正**。RAI 1.7 / 1.7.1 のエントリは両方とも実存する `32.0.203.314` (公開済みドライバ) を返すように変更。架空の `329` / `380` を排除。AMD docs へのクロスリファレンスを関数ヘッダに追加。 | `Get-RecommendedNpuDriverBuild` |
 | C6 | **全ヘッダの `.EXAMPLE` ファイル名** を `NPU_RAI1.7.1_380_WHQL.zip` (架空) から `NPU_RAI1.6.1_314_WHQL.zip` (verified) に更新。 | スクリプトヘッダ 約 93、99、110、124、132 行目 |
 | C7 | **Default-Strix プロファイルラベル** を `default-strix-rai1.7.1` から `default-strix-rai1.6.1` に変更。P03 バナーは verified driver build を反映。 | `Get-AmdNpuPlatform` の `$AssumeIfMissing` 分岐 |
@@ -693,6 +693,59 @@ To actually use the NPU for AI inference, install Ryzen AI Software:
 - AMD ドキュメントに新しい EULA URL パターンが出現 (既知 2 種類以外)
 
 再検証手順は 4.6.1 と同じ: 公開 AMD ページの fetch、`amd/ryzen-ai-documentation` GitHub リポジトリでの EULA URL パターン照合、自動化成功のエンドユーザー報告のチェック。
+
+### 4.7 バージョニング軸分離の検証 — 2026-05-10
+
+NPU スクリプトのバージョン管理ロジックは **2026-05-10** に再設計し、**NPU カーネルモードドライバ** のバージョニング体系と **Ryzen AI Software (ユーザーモードスタック)** のバージョニング体系を完全に分離しました。AMD 公式ドキュメント <https://ryzenai.docs.amd.com/en/latest/inst.html> (Last updated 2026-04-19) に準拠しています。
+
+#### 4.7.1 2 つの独立したバージョニング体系
+
+AMD のインストールガイドは NPU ドライバと Ryzen AI Software を完全に切り離された artefact として扱っています:
+
+| 観点 | NPU カーネルモードドライバ (axis A) | Ryzen AI Software (axis B) |
+|---|---|---|
+| 実体 | `npu_sw_installer.exe` に同梱される Windows カーネルモードドライバ。PCI デバイスバインディングとファームウェアロードを担当 | ユーザーモードランタイム: Python conda 環境、ONNX Runtime VitisAI EP、OnnxRuntime GenAI (OGA)、AMD Quark quantizer、xrt-smi tool |
+| 配布 | EULA gate 付き ZIP: `account.amd.com/en/forms/downloads/ryzenai-eula-public-xef.html?filename=NPU_RAI*_WHQL.zip` | EULA gate 付き EXE: `account.amd.com/en/forms/downloads/xef.html?filename=ryzen-ai-lt-*.exe` (異なる EULA URL パターンに注意) |
+| 現在公開されているバージョン (AMD docs 2026-04-19 時点) | `NPU_RAI1.5_280_WHQL.zip` (driver 32.0.203.280) と `NPU_RAI1.6.1_314_WHQL.zip` (driver 32.0.203.314) | `1.7.1` (最新)、installer `ryzen-ai-lt-1.7.1.exe` および NuGet `1.7.1_nuget_signed.zip` |
+| 更新ペース | 遅め — 新しいファームウェア/ドライバペアがリリースされた時のみ。サポート範囲内の旧 RAI Software バージョンとは後方互換 | 頻繁 — 新モデルサポート、性能改善、バグ修正をリリース。**AMD はエンドユーザーワークロードでは常に最新版を推奨**。 |
+| 本スクリプトでの operator デフォルト | `latest` → `NPU_RAI1.6.1_314` (公開済 2 パッケージのうち新しい方) | `latest` → `1.7.1` (現時点でスクリプトが認識する最新版に自動解決) |
+| ZIP ファイル名内の命名 | `NPU_RAI*_WHQL.zip` 内の `RAI1.5` / `RAI1.6.1` トークンは **歴史的な命名アーティファクト** — どちらの ZIP も現行 Ryzen AI Software 1.7.1 で動作 | バージョニングは独自体系: `1.5` → `1.6.1` → `1.7` → `1.7.1` |
+
+重要なポイント: `NPU_RAI1.6.1_314_WHQL.zip` の `1.6.1` は **Ryzen AI Software のバージョンではありません**。元 RAI 1.6.1 リリース時期に由来するリリースチャネルラベルです。同じドライバ ZIP が RAI Software 1.7.1 用の推奨ドライバとして引き続き使用されます。
+
+#### 4.7.2 互換性評価を別軸として確立
+
+AMD は Ryzen AI Software インストールガイドでドライバ-ソフトウェア互換性を文書化しています。RAI 1.7.1 (現時点最新) では以下の通り:
+
+> "Download and Install the NPU driver version: 32.0.203.280 or newer using the following links" — `NPU_RAI1.5_280` および `NPU_RAI1.6.1_314` の両方が valid options として明示。
+
+これから導かれる互換性マトリクス (axis C — axis A + B から導出):
+
+|  | RAI 1.5 | RAI 1.6.1 | RAI 1.7 | RAI 1.7.1 |
+|---|---|---|---|---|
+| Driver 32.0.203.280 (`NPU_RAI1.5_280`) | ✅ | ✅ | ✅ | ✅ |
+| Driver 32.0.203.314 (`NPU_RAI1.6.1_314`) | ✅ | ✅ | ✅ | ✅ |
+
+最小ドライバ要件 (`32.0.203.280`) は AMD ドキュメント上、サポートされる全 RAI Software バージョンで一貫しています。スクリプトの `Test-NpuDriverRaiCompatibility` 関数がこのマトリクスを符号化し、P03 で `OK` または `MISMATCH` を出力します。
+
+#### 4.7.3 コードレベルの変更
+
+| レイヤ | 変更前 | 変更後 |
+|---|---|---|
+| **operator パラメータ** | 単一の `-PreferredRyzenAiVersion <ver>` (driver と software を 1 つのスイッチで混在) | 独立した 2 パラメータ: `-NpuDriverPackage <NPU_RAI1.5_280 \| NPU_RAI1.6.1_314 \| latest>` と `-RyzenAiSoftwareVersion <1.5 \| 1.6.1 \| 1.7 \| 1.7.1 \| latest>`。両方とも default `latest`。 |
+| **カタログ関数** | `Get-RecommendedNpuDriverBuild $RaiVersion → $build` (誤った結合) と `Get-NpuZipFilename $RaiVersion $build → $filename` (架空ファイル名を生成する文字列連結) | 独立した 3 関数: `Get-NpuDriverPackageInfo` (axis A: 文書化済 ZIP の完全パッケージメタデータを返す)、`Get-LatestRyzenAiSoftwareInfo` (axis B: `IsLatest` フラグ付き RAI Software メタデータを返す)、`Test-NpuDriverRaiCompatibility` (axis C: 上記マトリクスを `[version]` 比較で評価) |
+| **検出済プラットフォームフィールド** | `RecommendedRaiVer`、`RecommendedDriver` (2 フィールド、不明瞭な結合) | `NpuDriverPackage`、`NpuDriverBuild`、`NpuDriverZipName` (axis A)、`RyzenAiSoftwareVersion`、`RyzenAiSoftwareInstaller` (axis B)、`DriverSoftwareCompatible`、`DriverSoftwareCompatNote` (axis C) — 軸帰属を明示した 7 フィールド |
+| **P03 バナー出力** | "Preferred RAI ver" と "Recommended drv" を並べた単一ブロック | ラベル付き 3 ブロック: "NPU kernel-mode driver (independent versioning axis)"、"Ryzen AI Software (independent versioning axis - always latest unless pinned)"、"Driver <-> RAI Software compatibility (separate evaluation axis)" を `OK` / `MISMATCH` ステータス付きで出力 |
+| **post-install guidance (I04)** | RAI バージョンが空の場合 `1.7.1` にハードコード fallback | `RyzenAiSoftwareInstaller` フィールドを直接参照。フィールドが空の時のみ `ryzen-ai-lt-1.7.1.exe` に fallback。「NPU driver と Ryzen AI Software は INDEPENDENTLY にバージョン管理されます。エンドユーザーワークロードでは常に LATEST Ryzen AI Software を利用してください」を明示 |
+
+#### 4.7.4 将来のメンテナンス
+
+AMD が新しい Ryzen AI リリースを公開した際、スクリプトを 2 箇所更新します:
+
+1. **新しい NPU ドライバ ZIP が公開された場合** (例: `NPU_RAI1.8_400_WHQL.zip`): `Get-NpuDriverPackageInfo` カタログと `-NpuDriverPackage` の `ValidateSet` にエントリを追加。新しいドライバが現行 RAI Software に異なる最小要件を導入する場合は `Test-NpuDriverRaiCompatibility` も更新。
+2. **新しい Ryzen AI Software バージョンがリリースされた場合** (例: `1.8.0`): `Get-LatestRyzenAiSoftwareInfo` カタログにエントリを追加し、`$latestVersion` を新バージョンに更新、 `-RyzenAiSoftwareVersion` の `ValidateSet` にも追加。AMD release notes で新しい最小ドライバ要件をクロスチェックし、必要に応じて `Test-NpuDriverRaiCompatibility` の `$minimumPerRai` を更新。
+
+この 2 つの更新は独立しています — ドライバサポート追加にソフトウェアメタデータの変更は不要で、その逆も同様です。これが本再設計が達成する中心的な設計特性です。
 
 ---
 

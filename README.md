@@ -278,23 +278,40 @@ After successful installation, the script prints a guidance block reminding you 
 
 ### Useful NPU-specific switches
 
-These switches **modify behaviour but do not provide a download source** by themselves. Always combine them with `-OfflineZip`, `-InstallerUrl`, or `-AmdAccountUser`/`-AmdAccountPassword` (Tier 4 / Tier 1 / Tier 2 respectively).
+The NPU script tracks **two independent versioning axes** plus a **separate compatibility evaluation axis**, per AMD's [Ryzen AI Software installation documentation](https://ryzenai.docs.amd.com/en/latest/inst.html):
+
+| Axis | Parameter | Default | What it controls |
+|---|---|---|---|
+| **A. NPU kernel-mode driver** | `-NpuDriverPackage` | `latest` (= `NPU_RAI1.6.1_314`) | Which NPU driver ZIP package the script targets. AMD currently publishes only two: `NPU_RAI1.5_280` (driver 32.0.203.280) and `NPU_RAI1.6.1_314` (driver 32.0.203.314). Both cover all NPU codenames (PHX/HPT/STX/STH/KRK). Driver versioning evolves slowly. |
+| **B. Ryzen AI Software (user-mode stack)** | `-RyzenAiSoftwareVersion` | `latest` (= `1.7.1`) | Which Ryzen AI Software version is referenced in the post-install guidance (you install the EXE separately). AMD recommends **always using the latest** for end-user workloads. |
+| **C. Compatibility evaluation** | (automatic) | n/a | Computed from A + B at P03. Currently AMD documents that all RAI versions require driver `≥ 32.0.203.280`, so both `280` and `314` are compatible with RAI `1.5` through `1.7.1`. |
+
+Switches in column A and B are **independent**. They do not need to share a version label; e.g. `-NpuDriverPackage NPU_RAI1.6.1_314 -RyzenAiSoftwareVersion 1.7.1` is a valid, AMD-supported combination (newer driver + latest RAI Software).
+
+These switches **modify behaviour but do not provide a download source** by themselves. Always combine them with `-OfflineZip`, `-InstallerUrl`, or `-AmdAccountUser`/`-AmdAccountPassword -ForceAmdAccountAuth` (Tier 4 / Tier 1 / Tier 2 respectively).
 
 ```powershell
-# Force a specific NPU codename (when CPU name detection is ambiguous; e.g. PHX vs HPT)
+# Force a specific NPU codename (when CPU name detection is ambiguous; e.g. PHX vs HPT).
 # Combine with -OfflineZip for predictable behaviour:
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action PrepareVerify `
-    -OfflineZip .\NPU_RAI1.7.1_380_WHQL.zip `
-    -NpuOverride STX                 # PHX | HPT | STX | KRK
+    -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
+    -NpuOverride STX                            # PHX | HPT | STX | KRK
 
-# Force a specific Ryzen AI version target. Note that PreferredRyzenAiVersion
-# must match the OfflineZip you supply (or the URL you supply) — the switch only
-# affects which INF subset P05 selects, not which ZIP gets fetched:
+# Pin a specific NPU driver package (axis A). Note: -NpuDriverPackage selects which
+# package the script reasons about. Your -OfflineZip must match the same package.
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action Install `
     -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
-    -PreferredRyzenAiVersion 1.6.1   # 1.5 | 1.6.1 | 1.7 | 1.7.1 (default)
+    -NpuDriverPackage NPU_RAI1.6.1_314          # NPU_RAI1.5_280 | NPU_RAI1.6.1_314 | latest
+
+# Pin a specific Ryzen AI Software version (axis B). Default 'latest' is recommended.
+# This affects only the post-install guidance message - the user installs the
+# Ryzen AI Software EXE separately via the AMD download page.
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
+    -Action Install `
+    -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
+    -RyzenAiSoftwareVersion latest              # 1.5 | 1.6.1 | 1.7 | 1.7.1 | latest
 
 # AMD account auto-download (Tier 2 — DISABLED by default since 2026-05-10 verification.
 # Pass -ForceAmdAccountAuth to opt in. Expected to fail on current AMD SPA portal.)
@@ -306,7 +323,7 @@ $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD account passwor
     -AmdAccountPassword $cred.Password
 ```
 
-> **Common pitfall**: running `-Action Install -NpuOverride STX -PreferredRyzenAiVersion 1.7.1` **without** specifying any download source will fall through to Tier 4 auto-scan and silently use whatever `NPU_RAI*_WHQL.zip` happens to be in `~/Downloads` — which may or may not match the codename / version you specified. **Always pin the source explicitly**.
+> **Common pitfall**: running `-Action Install -NpuOverride STX -NpuDriverPackage NPU_RAI1.6.1_314` **without** specifying any download source will fall through to Tier 4 auto-scan and silently use whatever `NPU_RAI*_WHQL.zip` happens to be in `~/Downloads` — which may or may not match the package you specified. **Always pin the source explicitly**.
 
 ---
 

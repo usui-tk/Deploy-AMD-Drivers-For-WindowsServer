@@ -278,23 +278,41 @@ Tier 4 用の手動ダウンロード手順:
 
 ### NPU 固有の便利オプション
 
-これらのスイッチは **挙動を変更するだけで、ZIP のダウンロードソースを提供しません**。常に `-OfflineZip`、`-InstallerUrl`、または `-AmdAccountUser`/`-AmdAccountPassword` (それぞれ Tier 4 / Tier 1 / Tier 2) と組み合わせて使用してください。
+NPU スクリプトは AMD 公式 [Ryzen AI Software インストールドキュメント](https://ryzenai.docs.amd.com/en/latest/inst.html) に従い、**2 つの独立したバージョニング軸**と、それらを評価する **互換性軸 (別軸)** を扱います:
+
+| 軸 | パラメータ | デフォルト | 制御内容 |
+|---|---|---|---|
+| **A. NPU カーネルモードドライバ** | `-NpuDriverPackage` | `latest` (= `NPU_RAI1.6.1_314`) | スクリプトが対象とする NPU ドライバ ZIP パッケージ。AMD は現状 2 種類のみ公開: `NPU_RAI1.5_280` (driver 32.0.203.280) と `NPU_RAI1.6.1_314` (driver 32.0.203.314)。両者とも全 NPU コードネーム (PHX/HPT/STX/STH/KRK) をカバー。ドライババージョニングはゆっくり進化します。 |
+| **B. Ryzen AI Software (ユーザーモードスタック)** | `-RyzenAiSoftwareVersion` | `latest` (= `1.7.1`) | post-install ガイダンスで言及される Ryzen AI Software バージョン (EXE は別途インストール)。AMD は **エンドユーザーワークロードでは常に最新版** を推奨。 |
+| **C. 互換性評価** | (自動) | n/a | P03 で A + B から自動算出。現状 AMD は全 RAI バージョンが driver `≥ 32.0.203.280` を要求していることを文書化しているため、`280` および `314` の両方が RAI `1.5`〜`1.7.1` と互換。 |
+
+A 列と B 列のスイッチは **独立** です。バージョンラベルを揃える必要はなく、例えば `-NpuDriverPackage NPU_RAI1.6.1_314 -RyzenAiSoftwareVersion 1.7.1` は AMD 公認の有効な組合せ (新しいドライバ + 最新 RAI Software) です。
+
+これらのスイッチは **挙動を変更するだけで、ZIP のダウンロードソースを提供しません**。常に `-OfflineZip`、`-InstallerUrl`、または `-AmdAccountUser`/`-AmdAccountPassword -ForceAmdAccountAuth` (それぞれ Tier 4 / Tier 1 / Tier 2) と組み合わせて使用してください。
 
 ```powershell
 # 特定 NPU codename を強制 (CPU 名検出が曖昧な場合。例: PHX vs HPT)
 # 動作を予測可能にするため -OfflineZip と組合せて利用:
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action PrepareVerify `
-    -OfflineZip .\NPU_RAI1.7.1_380_WHQL.zip `
-    -NpuOverride STX                 # PHX | HPT | STX | KRK
+    -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
+    -NpuOverride STX                            # PHX | HPT | STX | KRK
 
-# 特定 Ryzen AI バージョンを target に指定。注意: PreferredRyzenAiVersion は
-# 提供する OfflineZip (もしくは URL) と一致している必要があります。本スイッチは
-# P05 が選択する INF サブセットを変更するだけで、どの ZIP を fetch するかには影響しません:
+# 特定 NPU ドライバパッケージを pin (axis A)。注意: -NpuDriverPackage はスクリプトが
+# どのパッケージを前提にロジックを組み立てるかを制御するので、-OfflineZip は同じパッケージ
+# のものを指定する必要があります。
 .\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
     -Action Install `
     -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
-    -PreferredRyzenAiVersion 1.6.1   # 1.5 | 1.6.1 | 1.7 | 1.7.1 (default)
+    -NpuDriverPackage NPU_RAI1.6.1_314          # NPU_RAI1.5_280 | NPU_RAI1.6.1_314 | latest
+
+# 特定 Ryzen AI Software バージョンを pin (axis B)。デフォルト 'latest' を推奨。
+# このパラメータは post-install guidance メッセージにのみ影響します — Ryzen AI Software
+# EXE は AMD ダウンロードページから別途ユーザーがインストールします。
+.\Deploy-AMDNpuDriverOnWindowsServer.ps1 `
+    -Action Install `
+    -OfflineZip .\NPU_RAI1.6.1_314_WHQL.zip `
+    -RyzenAiSoftwareVersion latest              # 1.5 | 1.6.1 | 1.7 | 1.7.1 | latest
 
 # AMD アカウント自動ダウンロード (Tier 2 — 2026-05-10 検証によりデフォルト無効化済み。
 # opt-in する場合は -ForceAmdAccountAuth を指定。現状の AMD SPA ポータルでは失敗が想定されます。)
@@ -306,7 +324,7 @@ $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD アカウント
     -AmdAccountPassword $cred.Password
 ```
 
-> **よくある落とし穴**: `-Action Install -NpuOverride STX -PreferredRyzenAiVersion 1.7.1` を **ダウンロードソース未指定で** 実行すると、Tier 4 auto-scan にフォールスルーし、`~/Downloads` に偶然ある `NPU_RAI*_WHQL.zip` を黙って利用してしまいます — 指定した codename / バージョンと一致するかどうかは保証されません。**常にソースを明示的に固定してください**。
+> **よくある落とし穴**: `-Action Install -NpuOverride STX -NpuDriverPackage NPU_RAI1.6.1_314` を **ダウンロードソース未指定で** 実行すると、Tier 4 auto-scan にフォールスルーし、`~/Downloads` に偶然ある `NPU_RAI*_WHQL.zip` を黙って利用してしまいます — 指定したパッケージと一致するかどうかは保証されません。**常にソースを明示的に固定してください**。
 
 ---
 
