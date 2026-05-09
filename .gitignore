@@ -7,6 +7,7 @@
 # data (cert thumbprints, hardware fingerprints, etc.)
 C:/AMD-Chipset-WS/
 C:/AMD-Graphics-WS/
+C:/AMD-NPU-WS/
 *.pfx
 *.cer
 *.cat
@@ -15,8 +16,10 @@ inf_inventory.csv
 inf_inventory_report.txt
 chipset-AWS-*.log
 graphics-AWS-*.log
+npu-AWS-*.log
 m75q-*.log
 x13gen1-*.log
+t14sgen6-*.log
 *-prepareverify.log
 *-install.log
 
@@ -48,6 +51,11 @@ dist/
 amd_chipset_software_*.exe
 whql-amd-software-*.exe
 non-whql-amd-software-*.exe
+
+# AMD NPU driver ZIPs (Ryzen AI Software bundles, EULA-gated, never redistribute)
+NPU_RAI*.zip
+NPU_RAI*_WHQL/
+ryzen-ai-*.exe
 
 # ----- Sensitive / personal --------------------------------------------------
 *.key
