@@ -1,0 +1,45 @@
+# =============================================================================
+# Deploy-AMD-Drivers-For-WindowsServer .gitattributes
+# =============================================================================
+# Normalise line endings to keep diffs sane across Windows/Linux/macOS.
+
+# Default: auto-detect text files, normalise to LF in repo
+* text=auto eol=lf
+
+# PowerShell scripts MUST keep CRLF because Windows PowerShell on some legacy
+# platforms (particularly when launched via cmd /c) chokes on bare LF.
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.psd1  text eol=crlf
+
+# Markdown / docs / source: LF
+*.md    text eol=lf
+*.txt   text eol=lf
+*.py    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf
+
+# Binary blobs: never modify
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.exe   binary
+*.dll   binary
+*.cat   binary
+*.pfx   binary
+*.cer   binary
+
+# GitHub language detection: count .ps1 lines toward "PowerShell"
+*.ps1 linguist-language=PowerShell
+
+# Don't count generated docs toward language stats
+TESTING.md  linguist-documentation
+README.md   linguist-documentation
+README.ja.md linguist-documentation
+CONTRIBUTING.md linguist-documentation

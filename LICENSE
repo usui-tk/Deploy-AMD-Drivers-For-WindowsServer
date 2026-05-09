@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Takayuki Usui
+Copyright (c) 2026 Deploy-AMDDrivers-WindowsServer2025 contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,23 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+
+Additional Notices (informational, not part of the MIT license terms):
+
+This repository's PowerShell scripts download AMD installer EXEs at runtime
+from amd.com. The scripts do NOT redistribute AMD's binaries, INF files, or
+catalog files. AMD's End User License Agreement (EULA) for the chipset and
+graphics installer packages applies independently to those files; users are
+responsible for reviewing and complying with AMD's terms.
+
+The scripts also generate a self-signed code-signing certificate and re-sign
+AMD's INF / .cat files using that certificate. By doing so, the user becomes
+the cryptographic publisher of those drivers from the operating system's
+perspective. WHQL certification (Microsoft Hardware Lab Kit) is invalidated
+on any driver this pipeline replaces.
+
+This software is intended for personal, lab, and verification use only. It is
+not appropriate for production deployment at scale, and the contributors
+provide no warranty, support, or fitness-for-purpose guarantee.
