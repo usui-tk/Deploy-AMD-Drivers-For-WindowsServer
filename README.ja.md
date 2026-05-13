@@ -15,17 +15,24 @@ AMD のコンシューマー向け Ryzen チップセットドライバ・Radeon
 ## 目次
 
 - [このリポジトリの存在理由](#このリポジトリの存在理由)
+- [⚠️ 免責事項（実行前にお読みください）](#%EF%B8%8F-免責事項実行前にお読みください)
 - [リポジトリの内容物](#リポジトリの内容物)
 - [3 スクリプトのリスク分類](#3-スクリプトのリスク分類)
 - [対応範囲](#対応範囲)
+- [リポジトリ構成](#リポジトリ構成)
 - [Quick Start](#quick-start)
 - [NPU スクリプト固有の Quick Start](#npu-スクリプト固有の-quick-start)
 - [パイプラインアーキテクチャ (21 phase)](#パイプラインアーキテクチャ-21-phase)
+- [パラメータ一覧（スクリプト別）](#パラメータ一覧スクリプト別)
+- [出力ファイル](#出力ファイル)
+- [コンソール出力フォーマット](#コンソール出力フォーマット)
 - [システム要件](#システム要件)
 - [自己署名証明書: 有効期限・更新・失効](#自己署名証明書-有効期限更新失効)
 - [免責事項・自己責任の確認](#免責事項自己責任の確認)
 - [トラブルシューティング](#トラブルシューティング)
 - [開発ツール](#開発ツール)
+- [開発者向け仕様書](#開発者向け仕様書)
+- [ファイルエンコーディング](#ファイルエンコーディング)
 - [参考リンク](#参考リンク)
 - [ライセンス](#ライセンス)
 - [コントリビューション](#コントリビューション)
@@ -44,6 +51,25 @@ AMD のコンシューマー向け Ryzen チップセットドライバ・Radeon
 - AMD の Workstation `[Manufacturer]` decoration を解析し、**各エントリを `ProductType=3` (Server) で mirror** します (元の Workstation エントリは保持されるため、パッチ後の INF は両 OS 互換になります)。
 - `inf2cat /os:Server2025_X64` で新しい `.cat` catalog を生成します。
 - **自己生成のコード署名証明書で catalog を署名**し、その証明書を `LocalMachine\Root` + `LocalMachine\TrustedPublisher` に import、さらに **WDAC supplemental Code Integrity policy** で kernel-mode 署名者として認可します (Secure Boot は **ON のまま** — Windows Server 2022+ / Windows 11 22H2+ では `bcdedit /set testsigning on` 不要です)。
+
+---
+
+## ⚠️ 免責事項（実行前にお読みください）
+
+**自己責任でご利用ください。** 本スクリプトは "AS IS" で提供され、 明示・黙示を問わず、 いかなる種類の保証もありません。 作者およびコントリビュータは、 本スクリプトの使用・改変・配布から直接的または間接的に生じる、 損害、 データ消失、 BSOD、 BitLocker recovery prompt、 アカウント停止、 ハードウェア不安定化、 その他いかなる問題に対しても、 一切責任を負いません。
+
+本スクリプトを実行することにより、 以下を了承したものとみなします:
+
+* AMD End User License Agreement、 Microsoft Windows Software License Terms、 および適用される法令・規制に対する遵守は、 利用者の単独責任である
+* AMD の INF をパッチし自己生成証明書で再署名する行為により、 Windows から見た当該ドライバの暗号学的 publisher は AMD でも Microsoft でもなく、 **利用者自身**となる
+* 本パイプラインが置換するドライバは **WHQL 認証が無効化される**こと。 対象ハードウェアで Microsoft Premier Support を頼っている場合、 自己署名ドライバ起因の問題はサポート契約の対象外となる可能性がある
+* Chipset スクリプトで `-Action Install` を実行する前に **BitLocker 回復キーを記録**する (PSP driver の置換は Platform Security Processor firmware と相互作用し、 次回起動時に回復プロンプトが表示される可能性がある)
+* 実行環境を問わず、 スクリプトのソースコードを確認し動作を理解した上で実行する
+* **NPU スクリプトに関しては特に**、 実験的・研究用途のツールであることを了承する — 詳細は[3 スクリプトのリスク分類](#3-スクリプトのリスク分類)を参照
+
+本ツールは慎重に運用してください。 **AMD 公式の Server サポート対象ドライバが存在する場合は、 そちらを優先してください**。 本リポジトリは、 公式 Server クラスドライバが提供されておらず、 自己署名ドライバチェーンを自身のハードウェアで運用するリスクを受容できる、 という狭いケースを対象としています。
+
+BitLocker、 アンチチートソフト、 サポート影響、 証明書有効期限などを含む、 完全な自己責任の確認事項は、 後述の[免責事項・自己責任の確認](#免責事項自己責任の確認)を参照してください。
 
 ---
 
@@ -115,7 +141,35 @@ AMD のコンシューマー向け Ryzen チップセットドライバ・Radeon
 - **リアルタイム GPU compute stack** (ROCm、HIP SDK、Adrenalin パッケージに含まれる user-mode driver 以外の OpenCL): Server 対応については AMD の ROCm ドキュメントを参照してください。
 - **Ryzen AI Software user-mode stack** (Python conda env、ONNX Runtime VitisAI Execution Provider、OnnxRuntime GenAI/OGA、Vitis AI Quantizer、Lemonade SDK 等): **NPU スクリプトの対象外。** NPU スクリプトは kernel-mode driver のみ install します。Ryzen AI Software は <https://account.amd.com/en/forms/downloads/xef.html?filename=ryzen-ai-lt-1.7.1.exe> から AMD インストーラを取得し、operator が別途インストールする必要があります。AMD ドキュメントによれば公式サポート OS は Windows 11 build >= 22621.3527 のみです。
 
+---
+
+## リポジトリ構成
+
+`git clone` 直後のリポジトリ構成:
+
+```
+Deploy-AMD-Drivers-For-WindowsServer/
+├── Deploy-AMDChipsetDriverOnWindowsServer.ps1   Chipset ドライバパイプライン (21 phase)
+├── Deploy-AMDGraphicsDriverOnWindowsServer.ps1  Graphics ドライバパイプライン (21 phase)
+├── Deploy-AMDNpuDriverOnWindowsServer.ps1       NPU (Ryzen AI XDNA) パイプライン (21 phase)
+├── README.md                                    本ドキュメント (英語版)
+├── README.ja.md                                 本ドキュメント (日本語版)
+├── TESTING.md                                   クラウド (AWS) テスト手順 (英語版)
+├── TESTING.ja.md                                クラウド (AWS) テスト手順 (日本語版)
+├── SPEC.md                                      開発者向け仕様書 (英語版)
+├── SPEC.ja.md                                   開発者向け仕様書 (日本語版)
+├── CONTRIBUTING.md                              Issue / PR ガイドライン
+├── LICENSE                                      MIT License
+├── .gitattributes                               Git 改行コード正規化設定
+├── .gitignore                                   標準 ignore 設定
+└── tools/
+    ├── README.md                                psa.py 利用ガイド
+    └── psa.py                                   PowerShell 静的解析ツール (Python 3 単一ファイル)
+```
+
 ### スクリプトが生成するもの
+
+`-Action PrepareVerify` (もしくは `-Action All`) 実行後、各スクリプトは workspace に以下を生成します:
 
 ```
 C:\AMD-Chipset-WS\               (または C:\AMD-Graphics-WS\、C:\AMD-NPU-WS\)
@@ -356,6 +410,146 @@ $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD アカウント
 
 ---
 
+## パラメータ一覧（スクリプト別）
+
+3 スクリプトは `-Action`、 `-OnlyPhases`、 `-CleanWorkRoot`、 `-AllowWorkstationInstall`、 `-UseTestSigning`、 `-WorkRoot`、 `-PfxPassword` を共通パラメータコントラクトとして共有します。 Chipset / Graphics スクリプトはこれに加えて source-discovery と help 用のスイッチを共有、 NPU スクリプトは 4-tier installer 解決と platform override ブロックを追加します。
+
+### 共通パラメータ (Chipset / Graphics / NPU)
+
+| パラメータ                  | デフォルト           | 説明                                                                                              |
+| -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------- |
+| `-Action`                  | `PrepareVerify`      | `Prepare` / `Verify` / `PrepareVerify` / `Install` / `All` / `Cleanup` / `ListPhases`             |
+| `-OnlyPhases`              | `@()`                | Phase ID (例: `P05`、 `P06`、 `P08`、 `P09`) または short name (例: `PatchInfs`); `-Action` を上書き |
+| `-CleanWorkRoot`           | (off)                | workspace を実行前に削除 (download/extract を再取得)                                              |
+| `-AllowWorkstationInstall` | (off)                | Workstation OS (Win11) での Install phase 実行を許可。 デフォルトは block される (非推奨スイッチ) |
+| `-UseTestSigning`          | (off)                | WDAC 補助 policy ではなく `bcdedit /set testsigning on` にフォールバック (非推奨)                 |
+| `-WorkRoot`                | スクリプト別         | workspace path を上書き (Chipset: `C:\AMD-Chipset-WS`、 Graphics: `C:\AMD-Graphics-WS`、 NPU: `C:\AMD-NPU-WS`) |
+| `-PfxPassword`             | スクリプト別         | 自己署名 PFX のパスワード (Chipset / Graphics: `'ChangeMe!2026'`、 NPU: `''`)                     |
+| `-WdacPolicyGuid`          | スクリプト別 (固定 UUID v4) | WDAC 補助 policy GUID を上書き。 デフォルトはスクリプト別 (Chipset: `503860EA-…`、 Graphics: `85336828-…`、 NPU: `8B2C4F12-…`)。 レガシー deploy のクリーンアップ、 または並列複数 deploy で使用 |
+
+### Chipset / Graphics 固有パラメータ
+
+| パラメータ          | デフォルト                       | 説明                                                                                                |
+| ------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `-Help` / `-h` / `-?` | (off)                          | フォーマット済みの使用方法情報を表示して終了                                                        |
+| `-References`       | (off)                            | 関連 Microsoft Learn ドキュメントリンクの一覧を表示して終了                                          |
+| `-InstallerUrl`     | `''`                             | AMD インストーラ EXE の URL を明示指定 — URL 探索 probe を bypass                                    |
+| `-AmdLandingUrls`   | スクリプト別デフォルト array     | インストーラ EXE URL を scrape するための landing page (AMD のサイト構造変更時のみ override)         |
+| `-AmdFallbackUrl`   | スクリプト別デフォルト URL       | landing page の scraping が失敗した時の last-resort ハードコード URL                                 |
+| `-Force`            | (off)                            | 既存 workspace ファイルの強制上書き (要注意)                                                        |
+| `-TimestampUrl`     | `http://timestamp.digicert.com`  | `signtool sign /tr` 用 RFC 3161 タイムスタンプサーバ                                                |
+| `-WdacBasePolicyGuid` | `A244370E-44C9-4C06-B551-F6016E563076` (Windows 標準 base CI policy) | WDAC 補助 policy が target とする SupplementsBasePolicyID を上書き。 カスタム base policy を使用している環境でのみ変更 |
+
+> **Note**: Chipset / Graphics スクリプトは現状 `-CertValidityYears` を公開していません — デフォルトの 5 年有効期間はハードコードされています。 設定可能なパラメータとして公開しているのは NPU スクリプトのみです。
+
+### NPU 固有パラメータ
+
+| パラメータ               | デフォルト            | 説明                                                                                                              |
+| ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `-InstallerUrl`          | (なし)                | Tier 1: NPU ドライバ ZIP の URL を明示指定                                                                         |
+| `-OfflineZip`            | (なし)                | Tier 4 優先: 事前ダウンロード済み NPU ドライバ ZIP のパス (**推奨パターン**)                                       |
+| `-AmdAccountUser`        | (なし)                | Tier 2: AMD アカウントメール (BEST-EFFORT — デフォルト無効)                                                       |
+| `-AmdAccountPassword`    | (なし)                | Tier 2: AMD アカウントパスワード (SecureString)                                                                    |
+| `-ForceAmdAccountAuth`   | (off)                 | Tier 2 のフォームベース認証を opt-in (現状の AMD JS-driven SPA ポータルに対してはほぼ失敗が予想される)             |
+| `-NpuOverride`           | (なし)                | NPU codename を強制: `PHX` / `HPT` / `STX` / `KRK`                                                                |
+| `-NpuDriverPackage`      | `latest`              | NPU kernel-mode driver パッケージ: `NPU_RAI1.5_280` / `NPU_RAI1.6.1_314` / `latest` (`NPU_RAI1.6.1_314` に解決される) |
+| `-RyzenAiSoftwareVersion`| `latest`              | Ryzen AI Software (user-mode stack) 推奨バージョン: `1.5` / `1.6.1` / `1.7` / `1.7.1` / `latest`                  |
+| `-AssumeIfMissing`       | (off)                 | NPU 未検出時にデフォルトプロファイル (Strix Point + NPU driver 32.0.203.314 + RAI Software latest) で続行         |
+| `-CertValidityYears`     | `5`                   | 自己署名証明書の有効期間 (年、 NPU スクリプトのみ)                                                                |
+
+> **Note**: NPU ドライバ と Ryzen AI Software のバージョニング軸は **独立**です (AMD ドキュメント <https://ryzenai.docs.amd.com/en/latest/inst.html> 参照)。 `-NpuDriverPackage` と `-RyzenAiSoftwareVersion` は独立スイッチなので、 任意の driver × software 組み合わせが可能 (例: `-NpuDriverPackage NPU_RAI1.6.1_314 -RyzenAiSoftwareVersion 1.7.1`)。
+
+---
+
+## 出力ファイル
+
+各スクリプトは workspace (`C:\AMD-{Chipset,Graphics,NPU}-WS\`) 配下に以下のアーティファクトを書き出します:
+
+| パス (workspace からの相対)                  | 内容                                                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `download\<installer>`                       | AMD インストーラ EXE (Chipset/Graphics) または NPU ドライバ ZIP (NPU)                                          |
+| `extracted\`                                 | 展開済みインストーラ内容 (元 INF、 SYS、 DLL、 CAT ファイル)                                                  |
+| `patched\<inf>`                              | `ProductType=3` decoration を mirror したパッチ済み INF                                                       |
+| `patched\<cat>`                              | 再生成された catalog ファイル (`inf2cat /os:Server2025_X64` 出力)                                              |
+| `cert\AMD-Chipset-Driver-CodeSign.pfx` (Chipset) / `cert\AMD-Graphics-Driver-CodeSign.pfx` (Graphics) / `cert\AMD-NPU-Driver-CodeSign.pfx` (NPU) | 自己署名コード署名証明書 (PFX 形式) |
+| `cert\AMD-Chipset-Driver-CodeSign.cer` (Chipset) / `cert\AMD-Graphics-Driver-CodeSign.cer` (Graphics) / `cert\AMD-NPU-Driver-CodeSign.cer` (NPU) | 公開証明書 (CER 形式、 trust-store import 用)   |
+| `cert\AmdSuppPolicyId.txt` (Chipset/Graphics) | 動的に生成された WDAC supplemental PolicyId をクリーンアップ用に記録するマーカーファイル                       |
+| `cert\WDAC-Supplemental-NPU.xml` / `.cip` (NPU) | WDAC 補助 Code Integrity policy (XML ソース + バイナリ、 `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\` に deploy) |
+| `inf_inventory.csv`                          | P05 で生成される INF 単位 inventory (ファイル名、 provider、 class、 HWID 数、 decoration ステータス等)        |
+| `inf_inventory_report.txt`                   | P05 INF 解析の人間可読サマリ                                                                                  |
+
+### CSV カラム規約
+
+`inf_inventory.csv` は 3 スクリプトで以下のカラム規約に従います:
+
+| カラム                | 型     | 意味                                                                            |
+| --------------------- | ------ | ------------------------------------------------------------------------------- |
+| `FileName`            | string | INF ファイル名 (例: `kipudrv.inf`)                                              |
+| `FullPath`            | string | workspace 内の絶対パス                                                          |
+| `Provider`            | string | INF `[Version]` Provider フィールド (例: `AdvancedMicroDevicesInc.`)            |
+| `DriverVer`           | string | INF `DriverVer` 行 (例: `07/08/2025,32.0.203.314`)                              |
+| `Class`               | string | デバイスクラス (例: `Computer`、 `Display`、 `System`)                          |
+| `HwidCount`           | int    | INF が参照する Hardware ID の総数                                               |
+| `MatchesTargetNpu`    | bool   | (NPU 限定) INF がターゲット NPU の PCI HWID パターンを参照しているか            |
+| `MatchedHwidCount`    | int    | このINF のうちターゲットデバイスにマッチする HWID 数                            |
+| `HasServerDecoration` | bool   | INF が既に `ProductType=3` decoration を持つ (パッチ不要)                       |
+| `NeedsPatch`          | bool   | INF が Workstation のみの decoration を持ち `ProductType=3` mirror が必要       |
+| `SelectedForPipeline` | bool   | スクリプトの filter を通過し、 パッチ/署名パイプラインに入る INF                |
+
+---
+
+## コンソール出力フォーマット
+
+スクリプトが出力する全行は、 構造化・タイムスタンプ付きフォーマットに従い、 **3 スクリプト (Chipset / Graphics / NPU) で完全に同一**です。 これは意図的な設計で、 複数スクリプトのログを混在して読む operator が同じ語彙とビジュアルレイアウトを認識できるようにするためです。
+
+### マーカーの意味
+
+| マーカー | 色        | 用途     | 例                                                                  |
+| -------- | --------- | -------- | ------------------------------------------------------------------- |
+| `[*]`    | Cyan      | Step     | `[*] Acquiring signtool, inf2cat, and 7-Zip`                        |
+| `[+]`    | Green     | Ok       | `[+] Cert thumbprint: A1B2C3D4...`                                  |
+| `[!]`    | Yellow    | Warn     | `[!] Tier 2 (AMD account auto-download) is disabled by default`     |
+| `[X]`    | Red       | Fail     | `[X] Top-level error: AMD NPU not detected`                         |
+| `[~]`    | DarkGray  | Skip     | `[~] Inventory CSV: C:\AMD-NPU-WS\inf_inventory.csv`                |
+
+### サンプル出力 (NPU スクリプト、 P00 → P03)
+
+```
+========================================================================
+ Deploy-AMDNpuDriverOnWindowsServer
+ Version: npu-2026.05.10-r2  [npu-sister-aligned-r2]  SHA256: 09129eebb04b
+ Action : PrepareVerify
+ Repo   : https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer
+========================================================================
+
+========================================================================
+ PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
+ script: vnpu-2026.05.10-r2/09129eebb04b
+========================================================================
+[14:23:05]            [*] Running environment and sanity checks
+[14:23:05]            [+] Administrator privileges confirmed.
+[14:23:05]            [~] TLS protocols enabled: Tls, Tls11, Tls12, Tls13
+[14:23:06] [+0.42s]   [+] OS detected     : Microsoft Windows Server 2025 (build 26100)
+[14:23:06] [+0.42s]   [~] Profile applied : WS2025
+[14:23:06] [+0.42s]   [~] inf2cat /os: switch : Server2025_X64
+ PHASE P00 -> DONE     elapsed: 0.45s
+
+========================================================================
+ PHASE P03 - FetchInstaller             (Prep  )  start: 14:23:12
+========================================================================
+[14:23:12]            [*] Detecting NPU platform and resolving installer source (4-tier fallback)
+[14:23:12] [+0.18s]   [+] NPU codename         : Strix Point / Strix Halo
+[14:23:12] [+0.18s]   [+] NPU short name       : STX
+[14:23:12] [+0.18s]   [+] Hardware ID          : PCI\VEN_1022&DEV_17F0&REV_00
+[14:23:12] [+0.18s]   [+] NPU driver package   : NPU_RAI1.6.1_314
+[14:23:12] [+0.18s]   [+] NPU driver build     : 32.0.203.314
+ PHASE P03 -> DONE     elapsed: 1.23s
+```
+
+Phase header banner (`=` × 72、 Magenta) は dispatcher が出力し、 phase 関数自身は banner を出しません。 `[+X.XXs]` の elapsed-tag は各 phase エントリで reset され、 **当該 phase 内の経過時間** (スクリプト全体の経過ではない) を表します。
+
+---
+
 ## システム要件
 
 - **CPU**: AMD Ryzen 4000 シリーズ以降 (スクリプトの `Get-AmdChipsetPlatform` heuristic は 4000 → AI 300、AI Max 300 を認識します。それより古い silicon でも動作はしますが未検証)。NPU スクリプト用には Ryzen 7040 / 8040 / AI 300 / AI Max 300 / AI 200 シリーズ (NPU 内蔵) が必要。
@@ -564,6 +758,43 @@ python3 tools/psa.py Deploy-AMDNpuDriverOnWindowsServer.ps1
 ```
 
 詳細とルールごとの根拠は [`tools/README.md`](./tools/README.md) を参照してください。
+
+---
+
+## 開発者向け仕様書
+
+phase アーキテクチャのルール、 banner / log の規約、 パラメータ命名規約、 CSV / JSONL 出力フォーマット、 path-handling ルール (`-LiteralPath`)、 `tools/psa.py` が enforce する品質ゲート — これら開発者向けの完全な仕様書は以下を参照してください:
+
+- [**SPEC.md**](./SPEC.md) — 開発者向け仕様書 (英語、 本コードベースの拡張やコントリビューション、 AI アシスタント連携の authoritative reference)
+- [**SPEC.ja.md**](./SPEC.ja.md) — `SPEC.md` の日本語翻訳
+
+`SPEC.md` は 3 つの Part 構成です:
+
+- **Part A — 共通仕様。** 3 スクリプト共通のルール (phase アーキテクチャ、 banner / log マーカー、 パラメータ規約、 エラーハンドリング、 CSV カラム規約、 path-handling ルール)。 既存スクリプトを拡張する場合や 4 番目のスクリプトを追加する場合は、 まずここを読んでください。
+- **Part B — スクリプト固有仕様。** Chipset / Graphics / NPU 各スクリプトのユニークな platform 検出ロジック、 INF inventory filter、 インストーラソース解決の tier 構成、 既知の platform 固有挙動を、 1 スクリプトにつき 1 セクションで documentation。
+- **Part C — 品質ゲートと教訓。** `psa.py` のチェック項目、 `TESTING.md` がカバーする回帰テスト、 現実装に焼き込まれている historical fix (例: chipset r46 の timezone 起因 DriverDate 誤検知) のリスト。
+
+新機能を追加する際の推奨ワークフローは: `SPEC.md` を読む → 対象スクリプトの既存 `Invoke-*Phase*_*` 関数を読む → 変更を加える → `python3 tools/psa.py <script>.ps1` を実行 → 新規回帰シナリオがあれば `TESTING.md` を更新、 です。
+
+---
+
+## ファイルエンコーディング
+
+本リポジトリ内の `*.ps1` ファイルは **UTF-8 with BOM** (`utf-8-bom`) で保存されています。 これは非 ASCII 文字 (`Write-Skip` / `Write-Warn2` 等の呼び出しに含まれる日本語ログ文字列) を含む PowerShell 5.1 + 7.x スクリプトの正規エンコーディングです。 `.gitattributes` で commit 時にこれを強制しています:
+
+```
+*.ps1 text working-tree-encoding=UTF-8 eol=crlf
+```
+
+`*.md` ファイル全般 (`README.md`、 `README.ja.md`、 `TESTING.md`、 `TESTING.ja.md`、 `SPEC.md`、 `SPEC.ja.md` を含む) は **UTF-8 without BOM** で **LF** 改行を使用 — GitHub ネイティブの Markdown レンダリング規約に合わせています。 `.gitattributes` のルール:
+
+```
+*.md text eol=lf
+```
+
+Windows のエディタが `.md` ファイルに自動で BOM を挿入する場合 (一部の古い Notepad++ など) は、 commit 前に BOM を除去するか、 `.gitattributes` の正規化に任せてください。
+
+`.ps1` スクリプト内の日本語ログ文字列は、 UTF-8 (`chcp 65001`) に設定された ja-JP Windows コンソールで正しくレンダリングされるよう設計されています。 コンソールが ja-JP のデフォルトコードページ (932 / Shift-JIS) のままだと日本語が文字化けする可能性があります。 スクリプトは P00 で `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` を呼び出してこれを強制しますが、 `*>&1 | Tee-Object` 等で出力をファイルへリダイレクトする場合は、 二重エンコーディングを避けるためファイルエンコーディングを明示的に UTF-8 に設定してください。
 
 ---
 

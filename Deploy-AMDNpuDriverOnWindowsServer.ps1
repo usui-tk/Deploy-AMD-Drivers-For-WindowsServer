@@ -236,7 +236,10 @@ param(
     [string]$PfxPassword = '',
 
     [Parameter()]
-    [int]$CertValidityYears = 5
+    [int]$CertValidityYears = 5,
+
+    [Parameter()]
+    [string]$WdacPolicyGuid = ''
 )
 
 # =============================================================================
@@ -265,19 +268,27 @@ $Script:CertValidityYears       = $CertValidityYears
 # =============================================================================
 # Script-scope state
 # =============================================================================
-$Script:ScriptVersion       = 'npu-2026.05.10-r2'
-$Script:ScriptTag           = 'npu-sister-aligned-r2'
+$Script:ScriptVersion       = 'npu-2026.05.13-r3'
+$Script:ScriptTag           = 'npu-cert-name-r3'
 $Script:ScriptName          = 'Deploy-AMDNpuDriverOnWindowsServer'
 $Script:RepoUrl             = 'https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer'
 $Script:CertSubjectCn       = 'AMD NPU Driver Self-Sign (WS2025 Lab, At Own Risk)'
 $Script:WdacPolicyName      = 'AMD-NPU-Driver-SelfSign-Lab'
-$Script:WdacPolicyGuid      = '8B2C4F12-1E9D-4D7B-A4F8-9C7E2B6A53D1'  # stable per-script GUID
+# Default fixed WDAC Policy GUID (UUID v4). Operators can override via the
+# -WdacPolicyGuid parameter, e.g. when cleaning up a legacy deploy whose
+# PolicyId differs from the default (pre-r3 deploys generated dynamic GUIDs).
+$Script:WdacPolicyGuidDefault = '8B2C4F12-1E9D-4D7B-A4F8-9C7E2B6A53D1'
+$Script:WdacPolicyGuid      = if (-not [string]::IsNullOrWhiteSpace($WdacPolicyGuid)) {
+    $WdacPolicyGuid.Trim('{','}','(',')',' ')
+} else {
+    $Script:WdacPolicyGuidDefault
+}
 $Script:DownloadDir         = Join-Path $WorkRoot 'download'
 $Script:ExtractedDir        = Join-Path $WorkRoot 'extracted'
 $Script:PatchedDir          = Join-Path $WorkRoot 'patched'
 $Script:CertDir             = Join-Path $WorkRoot 'cert'
-$Script:PfxPath             = Join-Path $Script:CertDir 'AMD-NPU-CodeSign.pfx'
-$Script:CerPath             = Join-Path $Script:CertDir 'AMD-NPU-CodeSign.cer'
+$Script:PfxPath             = Join-Path $Script:CertDir 'AMD-NPU-Driver-CodeSign.pfx'
+$Script:CerPath             = Join-Path $Script:CertDir 'AMD-NPU-Driver-CodeSign.cer'
 $Script:WdacXmlPath         = Join-Path $Script:CertDir 'WDAC-Supplemental-NPU.xml'
 $Script:WdacBinPath         = Join-Path $Script:CertDir 'WDAC-Supplemental-NPU.cip'
 $Script:InventoryCsvPath    = Join-Path $WorkRoot 'inf_inventory.csv'

@@ -497,7 +497,35 @@ param(
 
     # === Certificate ==================================================
     [string]$PfxPassword   = 'ChangeMe!2026',
-    [string]$TimestampUrl  = 'http://timestamp.digicert.com'
+    [string]$TimestampUrl  = 'http://timestamp.digicert.com',
+
+    # === WDAC supplemental policy GUID overrides ======================
+    # By default, the script uses a fixed PolicyID for its WDAC
+    # supplemental policy (see $Script:WdacPolicyGuidDefault below).
+    # This means re-runs deploy / replace the same policy slot rather
+    # than accumulating one new policy per run.
+    #
+    # -WdacPolicyGuid:
+    #   Override the supplemental policy GUID. Useful for two cases:
+    #     1) Cleanup of a legacy deploy (pre-r48): such deploys used
+    #        a dynamically-generated PolicyID, recorded in
+    #        <workspace>\cert\AmdSuppPolicyId.txt. To remove a legacy
+    #        policy, run:
+    #          .\Deploy-AMDChipsetDriverOnWindowsServer.ps1 -Action Cleanup `
+    #              -WdacPolicyGuid <PolicyId from AmdSuppPolicyId.txt>
+    #     2) Side-by-side deploy of multiple copies of this script with
+    #        different PolicyIDs.
+    #   Accepts GUID with or without surrounding braces.
+    [string]$WdacPolicyGuid     = '',
+
+    # -WdacBasePolicyGuid:
+    #   Override the SupplementsBasePolicyID written into the
+    #   supplemental policy. By default this is the Microsoft standard
+    #   base policy ID {A244370E-44C9-4C06-B551-F6016E563076} (the
+    #   Windows-shipped default CI base policy). Change only if your
+    #   environment uses a custom base policy that this supplemental
+    #   should extend.
+    [string]$WdacBasePolicyGuid = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -529,8 +557,8 @@ $Script:PhaseTimings      = New-Object System.Collections.Generic.List[object]
 #                does NOT need manual bumping. If two users disagree
 #                about behaviour, comparing this hash tells them
 #                instantly whether they are running the same file.
-$Script:ScriptVersion = 'chipset-2026.05.09-r47'
-$Script:ScriptTag     = 'chipset-dedupe-matched-devices-r47'
+$Script:ScriptVersion = 'chipset-2026.05.13-r48'
+$Script:ScriptTag     = 'chipset-cert-name-wdac-guid-r48'
 $Script:ScriptHash    = '(unknown)'
 try {
     # $PSCommandPath is the full path to the running script. Falls
@@ -553,6 +581,41 @@ try {
 # Compact one-line tag used in places where space is limited (per-phase
 # headers). Format: "v2026.05.09-r10/a1b2c3d4e5f6"
 $Script:ScriptShortTag = ('v{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
+
+#####################################################################
+# SECTION 0.5: WDAC supplemental policy GUID configuration (r48+)
+#####################################################################
+# Before r48 the supplemental PolicyID was generated dynamically with
+# Set-CIPolicyIdInfo -ResetPolicyID and persisted to the workspace as
+# AmdSuppPolicyId.txt. From r48 on, the script uses a fixed default
+# GUID for predictability across deploys / cleanups, while still
+# allowing operators to override via -WdacPolicyGuid (e.g. to clean up
+# a legacy dynamic GUID, or to deploy multiple copies side by side).
+#
+# WdacPolicyGuidDefault     : fixed UUID v4, chipset-specific so it
+#                             does not collide with the graphics or
+#                             NPU scripts' WDAC policies on a host
+#                             that has all three deployed.
+# WdacBasePolicyGuidDefault : Microsoft-shipped CI base policy ID
+#                             (Windows 11 22H2+ / Server 2022+). The
+#                             supplemental policy SUPPLEMENTS this
+#                             base, meaning it is additive on top of
+#                             whatever rules the base enforces.
+$Script:WdacPolicyGuidDefault     = '503860EA-8837-4169-9BC4-19E5AEED721B'
+$Script:WdacBasePolicyGuidDefault = 'A244370E-44C9-4C06-B551-F6016E563076'
+
+# Resolved values (use operator override if non-empty, else default).
+# Accept GUIDs with or without surrounding braces / parens / whitespace.
+$Script:WdacPolicyGuid = if (-not [string]::IsNullOrWhiteSpace($WdacPolicyGuid)) {
+    $WdacPolicyGuid.Trim('{','}','(',')',' ')
+} else {
+    $Script:WdacPolicyGuidDefault
+}
+$Script:WdacBasePolicyGuid = if (-not [string]::IsNullOrWhiteSpace($WdacBasePolicyGuid)) {
+    $WdacBasePolicyGuid.Trim('{','}','(',')',' ')
+} else {
+    $Script:WdacBasePolicyGuidDefault
+}
 
 #####################################################################
 # SECTION 1: Logging helpers
@@ -1473,12 +1536,31 @@ function Get-AmdSuppPolicyMarkerPath {
 function Test-AmdWdacPolicyDeployed {
     # Returns the deployed-policy info if our supplemental is currently
     # active, otherwise $null.
+    #
+    # r48 change: detection logic is now in two stages:
+    #   Stage 1 (primary): look for the fixed $Script:WdacPolicyGuid
+    #     among active CI policies. This works for any r48+ deploy.
+    #   Stage 2 (legacy fallback): if a pre-r48 AmdSuppPolicyId.txt
+    #     marker file exists in the workspace cert dir, also look for
+    #     the dynamic GUID recorded there. This lets r48+ scripts
+    #     detect legacy deploys for clean removal.
     param($Ctx)
+    $active = Get-ActiveCodeIntegrityPolicies
+
+    # Stage 1: fixed GUID
+    if ($Script:WdacPolicyGuid) {
+        $fixedGuid = $Script:WdacPolicyGuid.Trim('{','}')
+        $hit = $active | Where-Object {
+            $_.PolicyId -and ($_.PolicyId.Trim('{','}') -ieq $fixedGuid)
+        } | Select-Object -First 1
+        if ($hit) { return $hit }
+    }
+
+    # Stage 2: legacy marker fallback
     $markerPath = Get-AmdSuppPolicyMarkerPath -Ctx $Ctx
     if (-not $markerPath -or -not (Test-Path $markerPath)) { return $null }
     $policyId = (Get-Content $markerPath -Raw -ErrorAction SilentlyContinue).Trim()
     if (-not $policyId) { return $null }
-    $active = Get-ActiveCodeIntegrityPolicies
     $hit = $active | Where-Object { $_.PolicyId -eq $policyId } | Select-Object -First 1
     return $hit
 }
@@ -1494,11 +1576,18 @@ function New-AmdDriverWdacSupplementalPolicy {
     # Result: the base policy still enforces strict signing for
     # everything else; only catalogs signed by our cert get the extra
     # green light.
+    #
+    # r48 change: the PolicyID is now a STABLE fixed GUID (from
+    # $Script:WdacPolicyGuid, defaulting to WdacPolicyGuidDefault). This
+    # means re-runs deploy / replace the same policy slot rather than
+    # accumulating a new policy per run. Use -WdacPolicyGuid to override
+    # (e.g. when cleaning up a legacy dynamic-GUID deploy).
     param(
         [Parameter(Mandatory)] [string]$CerPath,
         [Parameter(Mandatory)] [string]$OutputXml,
         [string]$PolicyName  = 'AMD Chipset Driver Self-Signed Allowlist (script-managed)',
-        [string]$BasePolicyId = '{A244370E-44C9-4C06-B551-F6016E563076}'
+        [string]$BasePolicyId = $Script:WdacBasePolicyGuid,
+        [string]$PolicyId     = $Script:WdacPolicyGuid
     )
     if (-not (Test-Path $CerPath)) {
         throw "Certificate not found at $CerPath"
@@ -1508,14 +1597,37 @@ function New-AmdDriverWdacSupplementalPolicy {
         throw "WDAC AllowAll template missing at $template"
     }
 
+    # Normalize GUID format: Set-CIPolicyIdInfo accepts {GUID} form
+    $basePolicyIdBraced = if ($BasePolicyId -match '^\{.*\}$') { $BasePolicyId } else { '{' + $BasePolicyId + '}' }
+    $policyIdBraced     = if ($PolicyId     -match '^\{.*\}$') { $PolicyId     } else { '{' + $PolicyId     + '}' }
+
     # Step 1: copy AllowAll template (gives us valid schema scaffolding)
     Copy-Item $template $OutputXml -Force
 
-    # Step 2: convert to supplemental policy targeting the base
-    # (-ResetPolicyID assigns a fresh PolicyID so multiple deploys
-    #  don't collide.)
-    Set-CIPolicyIdInfo -FilePath $OutputXml -SupplementsBasePolicyID $BasePolicyId -ResetPolicyID | Out-Null
+    # Step 2: convert to supplemental policy targeting the base, then
+    # set OUR fixed PolicyID (replaces previous -ResetPolicyID approach).
+    Set-CIPolicyIdInfo -FilePath $OutputXml -SupplementsBasePolicyID $basePolicyIdBraced | Out-Null
     Set-CIPolicyIdInfo -FilePath $OutputXml -PolicyName $PolicyName | Out-Null
+
+    # Step 2b: manually set the PolicyID GUID into the XML (PowerShell's
+    # Set-CIPolicyIdInfo has no -PolicyId switch; -ResetPolicyID would
+    # randomize it. We patch the XML directly.)
+    [xml]$xmlForId = Get-Content $OutputXml
+    $nsForId = New-Object System.Xml.XmlNamespaceManager($xmlForId.NameTable)
+    $nsForId.AddNamespace('si', 'urn:schemas-microsoft-com:sipolicy')
+    $policyIdNode = $xmlForId.SelectSingleNode('//si:SiPolicy/si:PolicyID', $nsForId)
+    if (-not $policyIdNode) {
+        # Fallback for some Windows schema versions: PolicyID lives at root
+        $policyIdNode = $xmlForId.SiPolicy.PolicyID
+        if ($policyIdNode -is [string] -or $null -eq $policyIdNode) {
+            # Try direct property assignment
+            try { $xmlForId.SiPolicy.PolicyID = $policyIdBraced } catch { }
+        }
+    }
+    if ($policyIdNode -and ($policyIdNode -isnot [string])) {
+        $policyIdNode.InnerText = $policyIdBraced
+    }
+    $xmlForId.Save($OutputXml)
 
     # Step 3: strip the catch-all AllowAll rules so the supplemental
     # ONLY adds our specific signer. WDAC supplemental policies are
@@ -1659,7 +1771,7 @@ function Test-CertAlreadyTrusted {
     $thumbprint = $Ctx.CertThumbprint
     if (-not $thumbprint) {
         $cerPath = if ($Ctx.CertCerPath) { $Ctx.CertCerPath } `
-                   else { Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.cer' }
+                   else { Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.cer' }
         if (-not (Test-Path $cerPath)) { return $false }
         try {
             $certObj = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $cerPath
@@ -4320,8 +4432,8 @@ function Invoke-PrepPhase07_CreateCertificate {
     param($Ctx)
     Write-PhaseHeader 'P07' 'CreateCertificate' 'Prep'
 
-    $pfxPath = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx'
-    $cerPath = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.cer'
+    $pfxPath = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx'
+    $cerPath = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.cer'
 
     # Subject (CN) - emphasises that this is a self-signed test cert,
     # NOT an official AMD or Microsoft-issued certificate, and is
@@ -4874,7 +4986,7 @@ function Invoke-PrepPhase09_SignCatalogs {
     if (-not $Ctx.Signtool) { throw 'signtool.exe not found - run P02 first.' }
 
     if (-not $Ctx.CertPfxPath -or -not (Test-Path $Ctx.CertPfxPath)) {
-        $Ctx.CertPfxPath = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx'
+        $Ctx.CertPfxPath = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx'
         if (-not (Test-Path $Ctx.CertPfxPath)) { throw 'PFX missing - run P07 first.' }
     }
 
@@ -5055,8 +5167,8 @@ function Invoke-VerifyPhase01_VerifyArtifacts {
         else       { $checks.Add("[FAIL] $Bad") | Out-Null; $issues.Add($Bad) | Out-Null }
     }
 
-    $pfx = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx'
-    $cer = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.cer'
+    $pfx = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx'
+    $cer = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.cer'
     _Check (Test-Path $pfx) "PFX present : $pfx"  "PFX MISSING (run P07): $pfx"
     _Check (Test-Path $cer) "CER present : $cer"  "CER MISSING (run P07): $cer"
 
@@ -5094,7 +5206,7 @@ function Invoke-VerifyPhase02_VerifyCertificate {
     param($Ctx)
     Write-PhaseHeader 'V02' 'VerifyCertificate' 'Verify'
 
-    $pfx = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx'
+    $pfx = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx'
     if (-not (Test-Path $pfx)) {
         Write-Fail "PFX not found: $pfx"
         throw 'V02: cannot verify certificate without PFX (run P07)'
@@ -5501,7 +5613,7 @@ function Invoke-VerifyPhase05_DryRunInstall {
 
     # ----- I01 dry-run: TrustCertificate -----
     Write-Host '[Dry-Run I01] TrustCertificate -----------------------' -ForegroundColor Cyan
-    $pfx = Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx'
+    $pfx = Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx'
     if (-not (Test-Path $pfx)) {
         Write-Warn2 '  PFX missing - I01 would FAIL'
     } else {
@@ -7164,7 +7276,7 @@ function Invoke-InstPhase00_PreInstallReview {
 
     # ---- Certificate info ----
     Write-Host '--- Certificate that I01 will trust ---' -ForegroundColor Cyan
-    $pfx = if ($Ctx.CertPfxPath) { $Ctx.CertPfxPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx' }
+    $pfx = if ($Ctx.CertPfxPath) { $Ctx.CertPfxPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx' }
     if (Test-Path $pfx) {
         try {
             $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::DefaultKeySet
@@ -7253,7 +7365,7 @@ function Invoke-InstPhase01_TrustCertificate {
         return
     }
 
-    $pfx = if ($Ctx.CertPfxPath) { $Ctx.CertPfxPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.pfx' }
+    $pfx = if ($Ctx.CertPfxPath) { $Ctx.CertPfxPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.pfx' }
     if (-not (Test-Path $pfx)) { throw "PFX not found at $pfx (run P07 first)." }
 
     # Use .NET API to load PFX with password non-interactively.
@@ -7372,7 +7484,7 @@ function Invoke-InstPhase02_AuthorizeDriverSigning {
         }
 
         # Need the .cer (P07 product). Allow -Force to skip the check.
-        $cer = if ($Ctx.CertCerPath) { $Ctx.CertCerPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Driver-CodeSign.cer' }
+        $cer = if ($Ctx.CertCerPath) { $Ctx.CertCerPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.cer' }
         if (-not (Test-Path $cer)) {
             throw "I02: cert file not found at $cer - run P07 (CreateCertificate) first."
         }

@@ -15,17 +15,24 @@ PowerShell pipeline that makes AMD's consumer-targeted Ryzen chipset, Radeon gra
 ## Table of Contents
 
 - [Why this exists](#why-this-exists)
+- [⚠️ Disclaimer (read before running)](#%EF%B8%8F-disclaimer-read-before-running)
 - [What's in the box](#whats-in-the-box)
 - [Risk classification of the three scripts](#risk-classification-of-the-three-scripts)
 - [Scope of coverage](#scope-of-coverage)
+- [Folder layout](#folder-layout)
 - [Quick start](#quick-start)
 - [NPU-specific quick start](#npu-specific-quick-start)
 - [Pipeline architecture (21 phases)](#pipeline-architecture-21-phases)
+- [Parameters (per script)](#parameters-per-script)
+- [Output files](#output-files)
+- [Console output format](#console-output-format)
 - [System requirements](#system-requirements)
 - [Self-signed certificate: expiry, renewal, and revocation](#self-signed-certificate-expiry-renewal-and-revocation)
 - [Disclaimer & at-your-own-risk acknowledgements](#disclaimer--at-your-own-risk-acknowledgements)
 - [Troubleshooting](#troubleshooting)
 - [Development tools](#development-tools)
+- [Developer specification](#developer-specification)
+- [File encoding](#file-encoding)
 - [References](#references)
 - [License](#license)
 - [Contributing](#contributing)
@@ -44,6 +51,25 @@ This pipeline solves both problems by:
 - Parsing AMD's Workstation `[Manufacturer]` decorations and **mirroring each one with `ProductType=3` (Server)**, leaving the original Workstation entries intact (so the patched INF is bi-compatible).
 - Generating a fresh `.cat` catalog with `inf2cat /os:Server2025_X64`.
 - **Signing the catalog with a self-generated code-signing certificate**, importing the cert into `LocalMachine\Root` + `LocalMachine\TrustedPublisher`, and authorising the cert as a kernel-mode signer via a **WDAC supplemental Code Integrity policy** (which keeps Secure Boot **on** — no `bcdedit /set testsigning on` required on Windows Server 2022+ / Windows 11 22H2+).
+
+---
+
+## ⚠️ Disclaimer (read before running)
+
+**USE AT YOUR OWN RISK.** These scripts are provided "AS IS" without warranty of any kind, express or implied. The authors and contributors are not liable for any damages, data loss, BSODs, BitLocker recovery prompts, account suspension, hardware instability, or any other problems — direct or indirect — that may arise from using, modifying, or distributing these scripts.
+
+By running these scripts, you acknowledge that:
+
+* You are solely responsible for verifying that your use complies with AMD's End User License Agreement, Microsoft's Windows Software License Terms, and any applicable laws or regulations
+* You understand that patching AMD's INFs and re-signing them with your own certificate makes **you** — not AMD, not Microsoft — the cryptographic publisher of those drivers from Windows' point of view
+* You accept that **WHQL certification is invalidated** for any driver this pipeline replaces; if you rely on Microsoft Premier Support for affected hardware, your support contract may not cover issues caused by self-signed drivers
+* You will record your **BitLocker recovery keys** before running `-Action Install` on the chipset script (the PSP driver replacement interacts with Platform Security Processor firmware and can trigger recovery prompts on next boot)
+* You will review the script source code and understand its behavior before running it in any environment
+* For the **NPU script specifically**, you understand it is **experimental / research-grade** — see [Risk classification](#risk-classification-of-the-three-scripts) below
+
+Operate these tools considerately. **Always prefer official AMD Server-supported drivers when they exist.** This repository targets the narrow case where official Server-class drivers are unavailable and you are willing to operate a self-signed driver chain on your own hardware.
+
+For the full at-your-own-risk acknowledgements (BitLocker, anti-cheat software, support implications, cert expiry, etc.), see the [Disclaimer & at-your-own-risk acknowledgements](#disclaimer--at-your-own-risk-acknowledgements) section further down.
 
 ---
 
@@ -115,7 +141,35 @@ If after reading the above you still want to run the NPU script: see [NPU-specif
 - **Real-time GPU compute stacks** (ROCm, HIP SDK, OpenCL beyond the user-mode driver shipped in the Adrenalin package): consult AMD's ROCm documentation for Server.
 - **Ryzen AI Software user-mode stack** (Python conda env, ONNX Runtime VitisAI Execution Provider, OnnxRuntime GenAI/OGA, Vitis AI Quantizer, Lemonade SDK, etc.): **out of scope of the NPU script.** The NPU script installs the kernel-mode driver only. Ryzen AI Software must be installed separately by the operator from the AMD installer at <https://account.amd.com/en/forms/downloads/xef.html?filename=ryzen-ai-lt-1.7.1.exe>, and per AMD documentation it is officially supported on Windows 11 build >= 22621.3527 only.
 
+---
+
+## Folder layout
+
+Repository structure (after `git clone`):
+
+```
+Deploy-AMD-Drivers-For-WindowsServer/
+├── Deploy-AMDChipsetDriverOnWindowsServer.ps1   Chipset driver pipeline (21 phases)
+├── Deploy-AMDGraphicsDriverOnWindowsServer.ps1  Graphics driver pipeline (21 phases)
+├── Deploy-AMDNpuDriverOnWindowsServer.ps1       NPU (Ryzen AI XDNA) pipeline (21 phases)
+├── README.md                                    This document (English)
+├── README.ja.md                                 Japanese translation of README
+├── TESTING.md                                   Cloud (AWS) testing procedure
+├── TESTING.ja.md                                Japanese translation of TESTING
+├── SPEC.md                                      Developer specification (English)
+├── SPEC.ja.md                                   Japanese translation of SPEC
+├── CONTRIBUTING.md                              Issue / PR guidelines
+├── LICENSE                                      MIT License
+├── .gitattributes                               Git line-ending normalization
+├── .gitignore                                   Standard ignores
+└── tools/
+    ├── README.md                                psa.py usage guide
+    └── psa.py                                   PowerShell static analyzer (Python 3, single-file)
+```
+
 ### What the scripts produce
+
+After `-Action PrepareVerify` (or `-Action All`), each script populates its workspace:
 
 ```
 C:\AMD-Chipset-WS\               (or C:\AMD-Graphics-WS\, or C:\AMD-NPU-WS\)
@@ -355,6 +409,146 @@ $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD account passwor
 
 ---
 
+## Parameters (per script)
+
+All three scripts share a common parameter contract for `-Action`, `-OnlyPhases`, `-CleanWorkRoot`, `-AllowWorkstationInstall`, `-UseTestSigning`, `-WorkRoot`, and `-PfxPassword`. The chipset and graphics scripts share additional source-discovery and help switches; the NPU script adds a 4-tier installer source resolution and platform override block.
+
+### Common parameters (chipset, graphics, NPU)
+
+| Parameter                  | Default              | Description                                                                                       |
+| -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------- |
+| `-Action`                  | `PrepareVerify`      | `Prepare` / `Verify` / `PrepareVerify` / `Install` / `All` / `Cleanup` / `ListPhases`             |
+| `-OnlyPhases`              | `@()`                | Phase IDs (e.g. `P05`, `P06`, `P08`, `P09`) or short names (e.g. `PatchInfs`); overrides `-Action` |
+| `-CleanWorkRoot`           | (off)                | Delete the workspace directory before starting (forces a fresh download/extract)                  |
+| `-AllowWorkstationInstall` | (off)                | Permit Install-phase actions on Workstation OS (Win11). Discouraged — default blocks Install      |
+| `-UseTestSigning`          | (off)                | Fall back to `bcdedit /set testsigning on` instead of WDAC supplemental policy. Discouraged       |
+| `-WorkRoot`                | per-script           | Override workspace path (chipset: `C:\AMD-Chipset-WS`, graphics: `C:\AMD-Graphics-WS`, NPU: `C:\AMD-NPU-WS`) |
+| `-PfxPassword`             | per-script           | Password for the self-signed PFX (chipset/graphics: `'ChangeMe!2026'`, NPU: `''`)                 |
+| `-WdacPolicyGuid`          | per-script (fixed UUID v4) | Override the fixed WDAC supplemental policy GUID. Default is per-script (chipset: `503860EA-…`, graphics: `85336828-…`, NPU: `8B2C4F12-…`). Used for legacy-deploy cleanup or side-by-side multi-instance deploy |
+
+### Chipset / Graphics-specific parameters
+
+| Parameter           | Default                          | Description                                                                                       |
+| ------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `-Help` / `-h` / `-?` | (off)                          | Show formatted usage information and exit                                                         |
+| `-References`       | (off)                            | Display curated list of Microsoft Learn documentation links and exit                              |
+| `-InstallerUrl`     | `''`                             | Explicit URL to the AMD installer EXE — bypasses the URL discovery probe                          |
+| `-AmdLandingUrls`   | per-script default array         | Landing pages to scrape for installer EXE URL (override only if AMD changes their site structure) |
+| `-AmdFallbackUrl`   | per-script default URL           | Last-resort hard-coded installer URL when landing page scraping fails                             |
+| `-Force`            | (off)                            | Force overwrite of existing workspace files (use with care)                                       |
+| `-TimestampUrl`     | `http://timestamp.digicert.com`  | RFC 3161 timestamp server for `signtool sign /tr`                                                 |
+| `-WdacBasePolicyGuid` | `A244370E-44C9-4C06-B551-F6016E563076` (Windows-shipped base CI policy) | Override the SupplementsBasePolicyID that the WDAC supplemental policy targets. Change only if your environment uses a custom base policy |
+
+> **Note**: The chipset and graphics scripts do not currently expose `-CertValidityYears`; the default 5-year validity is hard-coded. Only the NPU script exposes this as a configurable parameter.
+
+### NPU-specific parameters
+
+| Parameter                | Default               | Description                                                                                                      |
+| ------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `-InstallerUrl`          | (none)                | Tier 1: explicit URL to the NPU driver ZIP                                                                       |
+| `-OfflineZip`            | (none)                | Tier 4 priority: path to a pre-downloaded NPU driver ZIP (**recommended pattern**)                                |
+| `-AmdAccountUser`        | (none)                | Tier 2: AMD account email for auto-download (BEST-EFFORT — disabled by default)                                  |
+| `-AmdAccountPassword`    | (none)                | Tier 2: AMD account password (SecureString)                                                                      |
+| `-ForceAmdAccountAuth`   | (off)                 | Opt in to Tier 2 form-based auth (expected to fail against current AMD JS-driven SPA portal)                     |
+| `-NpuOverride`           | (none)                | Force a specific NPU codename: `PHX` / `HPT` / `STX` / `KRK`                                                     |
+| `-NpuDriverPackage`      | `latest`              | NPU kernel-mode driver package: `NPU_RAI1.5_280` / `NPU_RAI1.6.1_314` / `latest` (resolves to `NPU_RAI1.6.1_314`) |
+| `-RyzenAiSoftwareVersion`| `latest`              | Ryzen AI Software (user-mode stack) version recommendation: `1.5` / `1.6.1` / `1.7` / `1.7.1` / `latest`         |
+| `-AssumeIfMissing`       | (off)                 | If NPU not detected, proceed using default profile (Strix Point + NPU driver 32.0.203.314 + RAI Software latest) |
+| `-CertValidityYears`     | `5`                   | Self-signed cert validity period in years (NPU script only)                                                      |
+
+> **Note** on NPU driver vs Ryzen AI Software versioning: per AMD documentation at <https://ryzenai.docs.amd.com/en/latest/inst.html>, NPU kernel driver and Ryzen AI Software are versioned **independently**. `-NpuDriverPackage` and `-RyzenAiSoftwareVersion` are therefore independent switches; you can combine any driver with any software (e.g. `-NpuDriverPackage NPU_RAI1.6.1_314 -RyzenAiSoftwareVersion 1.7.1`).
+
+---
+
+## Output files
+
+Each script writes the following artifacts under its workspace (`C:\AMD-{Chipset,Graphics,NPU}-WS\`):
+
+| Path (relative to workspace)                | Content                                                                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `download\<installer>`                      | AMD installer EXE (chipset/graphics) or NPU driver ZIP (NPU)                                                     |
+| `extracted\`                                | Unpacked installer contents (original INFs, SYS, DLL, CAT files)                                                 |
+| `patched\<inf>`                             | Patched INF files with `ProductType=3` decoration mirrors                                                        |
+| `patched\<cat>`                             | Regenerated catalog files (`inf2cat /os:Server2025_X64` output)                                                  |
+| `cert\AMD-Chipset-Driver-CodeSign.pfx` (chipset) / `cert\AMD-Graphics-Driver-CodeSign.pfx` (graphics) / `cert\AMD-NPU-Driver-CodeSign.pfx` (NPU) | Self-signed code-signing certificate (PFX format) |
+| `cert\AMD-Chipset-Driver-CodeSign.cer` (chipset) / `cert\AMD-Graphics-Driver-CodeSign.cer` (graphics) / `cert\AMD-NPU-Driver-CodeSign.cer` (NPU) | Public certificate (CER format) for trust-store import |
+| `cert\AmdSuppPolicyId.txt` (chipset/graphics) | Marker file recording the dynamically-generated WDAC supplemental PolicyId for later cleanup                   |
+| `cert\WDAC-Supplemental-NPU.xml` / `.cip` (NPU) | WDAC supplemental Code Integrity policy (XML source + binary deployed to `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\`) |
+| `inf_inventory.csv`                         | Per-INF inventory from P05 (file name, provider, class, HWID count, decoration status, etc.)                     |
+| `inf_inventory_report.txt`                  | Human-readable summary of P05 INF analysis                                                                       |
+
+### CSV column conventions
+
+`inf_inventory.csv` follows these conventions across all three scripts:
+
+| Column                | Type   | Meaning                                                                            |
+| --------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `FileName`            | string | INF filename (e.g. `kipudrv.inf`)                                                  |
+| `FullPath`            | string | Absolute path inside the workspace                                                 |
+| `Provider`            | string | INF `[Version]` Provider field (e.g. `AdvancedMicroDevicesInc.`)                   |
+| `DriverVer`           | string | INF `DriverVer` line (e.g. `07/08/2025,32.0.203.314`)                              |
+| `Class`               | string | Device class (e.g. `Computer`, `Display`, `System`)                                |
+| `HwidCount`           | int    | Total Hardware IDs referenced in the INF                                           |
+| `MatchesTargetNpu`    | bool   | (NPU only) INF references the target NPU PCI HWID pattern                          |
+| `MatchedHwidCount`    | int    | Number of HWIDs in this INF that match the target device                           |
+| `HasServerDecoration` | bool   | INF already has `ProductType=3` decoration (no patching needed)                    |
+| `NeedsPatch`          | bool   | INF has Workstation-only decorations and requires `ProductType=3` mirroring        |
+| `SelectedForPipeline` | bool   | INF passes the script's filter and enters the patch/sign pipeline                  |
+
+---
+
+## Console output format
+
+Every line written by the scripts follows a structured, time-stamped format that is **identical across all three scripts** (chipset, graphics, NPU). This is intentional — operators reading logs from mixed runs see the same vocabulary and visual layout.
+
+### Marker semantics
+
+| Marker | Colour    | Semantic | Example                                                          |
+| ------ | --------- | -------- | ---------------------------------------------------------------- |
+| `[*]`  | Cyan      | Step     | `[*] Acquiring signtool, inf2cat, and 7-Zip`                     |
+| `[+]`  | Green     | Ok       | `[+] Cert thumbprint: A1B2C3D4...`                               |
+| `[!]`  | Yellow    | Warn     | `[!] Tier 2 (AMD account auto-download) is disabled by default`  |
+| `[X]`  | Red       | Fail     | `[X] Top-level error: AMD NPU not detected`                      |
+| `[~]`  | DarkGray  | Skip     | `[~] Inventory CSV: C:\AMD-NPU-WS\inf_inventory.csv`             |
+
+### Sample output (NPU script, P00 → P03)
+
+```
+========================================================================
+ Deploy-AMDNpuDriverOnWindowsServer
+ Version: npu-2026.05.10-r2  [npu-sister-aligned-r2]  SHA256: 09129eebb04b
+ Action : PrepareVerify
+ Repo   : https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer
+========================================================================
+
+========================================================================
+ PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
+ script: vnpu-2026.05.10-r2/09129eebb04b
+========================================================================
+[14:23:05]            [*] Running environment and sanity checks
+[14:23:05]            [+] Administrator privileges confirmed.
+[14:23:05]            [~] TLS protocols enabled: Tls, Tls11, Tls12, Tls13
+[14:23:06] [+0.42s]   [+] OS detected     : Microsoft Windows Server 2025 (build 26100)
+[14:23:06] [+0.42s]   [~] Profile applied : WS2025
+[14:23:06] [+0.42s]   [~] inf2cat /os: switch : Server2025_X64
+ PHASE P00 -> DONE     elapsed: 0.45s
+
+========================================================================
+ PHASE P03 - FetchInstaller             (Prep  )  start: 14:23:12
+========================================================================
+[14:23:12]            [*] Detecting NPU platform and resolving installer source (4-tier fallback)
+[14:23:12] [+0.18s]   [+] NPU codename         : Strix Point / Strix Halo
+[14:23:12] [+0.18s]   [+] NPU short name       : STX
+[14:23:12] [+0.18s]   [+] Hardware ID          : PCI\VEN_1022&DEV_17F0&REV_00
+[14:23:12] [+0.18s]   [+] NPU driver package   : NPU_RAI1.6.1_314
+[14:23:12] [+0.18s]   [+] NPU driver build     : 32.0.203.314
+ PHASE P03 -> DONE     elapsed: 1.23s
+```
+
+The phase header banner (`=` × 72, Magenta) is emitted by the dispatcher; phase functions never print their own banner. The `[+X.XXs]` elapsed-tag is reset at each phase entry so it tracks **time inside the current phase**, not total runtime.
+
+---
+
 ## System requirements
 
 - **CPU**: AMD Ryzen 4000 series or newer (the script's `Get-AmdChipsetPlatform` heuristic recognises 4000 → AI 300, AI Max 300; older silicon may run but is untested). For the NPU script: Ryzen 7040 / 8040 / AI 300 / AI Max 300 / AI 200 series with an integrated NPU.
@@ -563,6 +757,43 @@ Exit codes: `0` = clean, `1` = warnings only, `2` = errors. Useful in CI:
 ```
 
 See [`tools/README.md`](./tools/README.md) for more details and the rationale for each rule.
+
+---
+
+## Developer specification
+
+For the full developer specification — including phase architecture rules, banner / log conventions, parameter naming conventions, CSV / JSONL output format, path-handling rules (`-LiteralPath`), and the quality gates enforced by `tools/psa.py` — see:
+
+- [**SPEC.md**](./SPEC.md) — English developer specification (the authoritative reference for contributors and AI assistants working on this codebase)
+- [**SPEC.ja.md**](./SPEC.ja.md) — Japanese translation of SPEC.md
+
+`SPEC.md` is structured in three parts:
+
+- **Part A — Common Specification.** Reusable rules across the three scripts (phase architecture, banner / log markers, parameter conventions, error handling, CSV column conventions, path-handling rules). Pick this up first if you are extending any of the three scripts or adding a fourth.
+- **Part B — Script-specific Specifications.** One section per script (Chipset / Graphics / NPU) documenting the unique platform-detection logic, INF inventory filters, installer source resolution tiers, and known platform quirks.
+- **Part C — Quality Gates & Lessons Learned.** What `psa.py` checks for, what regression tests `TESTING.md` covers, and the historical fixes (e.g. timezone-induced DriverDate false positives in chipset r46) that are baked into the current implementation.
+
+If you are adding a new feature, the recommended workflow is: read `SPEC.md` → read the relevant script's existing `Invoke-*Phase*_*` functions → make changes → run `python3 tools/psa.py <script>.ps1` → update `TESTING.md` with any new regression scenarios.
+
+---
+
+## File encoding
+
+All `*.ps1` files in this repository are stored as **UTF-8 with BOM** (`utf-8-bom`), which is the canonical encoding for PowerShell 5.1 + 7.x scripts that contain non-ASCII characters (the Japanese log strings inside `Write-Skip` / `Write-Warn2` calls). The `.gitattributes` file enforces this on commit:
+
+```
+*.ps1 text working-tree-encoding=UTF-8 eol=crlf
+```
+
+All `*.md` files (including `README.md`, `README.ja.md`, `TESTING.md`, `TESTING.ja.md`, `SPEC.md`, `SPEC.ja.md`) are stored as **UTF-8 without BOM** with **LF** line endings — the GitHub-native convention for Markdown rendering. The `.gitattributes` rule:
+
+```
+*.md text eol=lf
+```
+
+If you edit these files on Windows with an editor that auto-injects a BOM into `.md` files (some older Notepad++ versions do this), strip it before committing or let `.gitattributes` normalize.
+
+The Japanese log strings inside the `.ps1` scripts are designed to render correctly on a ja-JP Windows console that is set to UTF-8 (`chcp 65001`). If your console is at the default ja-JP code page (932 / Shift-JIS), Japanese strings may garble. The scripts include a `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` call in P00 to enforce this, but if you redirect output to a file via `*>&1 | Tee-Object`, set your file encoding explicitly to UTF-8 to avoid double-encoding.
 
 ---
 
