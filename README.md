@@ -759,18 +759,18 @@ In the rest of this document and in `SPEC.md` / `TESTING.md` / `CONTRIBUTING.md`
 
 #### Checks performed
 
-| Code | Severity | Description |
+`psa.py` v3.0.0 ships with a 27-rule check set spanning `PSA1001`..`PSA6006`, grouped into six categories:
+
+| Category | Code range | Examples |
 | --- | --- | --- |
-| C1 | error | Brace balance (`{` vs `}`) |
-| C2 | error | Paren balance (`(` vs `)`) |
-| C3 | error | Bracket balance (`[` vs `]`) |
-| C4 | warning | Undefined variable references (heuristic) |
-| C5 | warning | Auto-variable shadowing (`$args`, `$_`, `$matches`, etc.) |
-| C6 | warning | `Start-Process -ArgumentList` (prefer `ProcessStartInfo` for spaces-in-path) |
-| C7 | warning | `-match` against bare `$variable` (returns true if `$null`) |
-| C8 | info | TODO / FIXME markers |
-| C9 | warning | Trailing backtick before empty line |
-| C10 | warning | `-match` against empty string (always true) |
+| Syntax balance      | `PSA1001`..`PSA1003` | brace / paren / bracket balance |
+| Semantics           | `PSA2001`..`PSA2006` | undefined variable, auto-variable shadowing, `-match` against bare variable, `$null` on the right of `-eq`/`-ne`, assignment / redirection inside conditional |
+| Style               | `PSA3001`..`PSA3004` | `Start-Process -ArgumentList` (prefer `ProcessStartInfo` for spaces-in-path), trailing backtick before empty line, `-match` against empty string, empty `catch` block |
+| Hygiene             | `PSA4001`..`PSA4004` | unfinished markers (TODO / FIXME / XXX / HACK), trailing whitespace, long line, trailing semicolon |
+| Security            | `PSA5001`..`PSA5004` | plain-text password parameter, `Invoke-Expression`, broken hash algorithm, hardcoded `ComputerName` |
+| Best practice       | `PSA6001`..`PSA6006` | non-approved verb, cmdlet alias, plural function noun, `$global:` definition, mandatory parameter with default, switch defaulting to `$true` |
+
+For the authoritative specification of every rule, see [`scripts/python/powershell-static-analyzer/SPEC.md`](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/SPEC.md) §4 in the [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) repository.
 
 Exit codes: `0` = clean, `1` = warnings only, `2` = errors. Useful in CI:
 

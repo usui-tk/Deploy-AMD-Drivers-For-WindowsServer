@@ -23,7 +23,7 @@ This document consolidates everything needed to test and evaluate `Deploy-AMD-Dr
 
 The NPU script's verification is currently limited to:
 
-1. **Static analysis** with `psa.py` v2.3.0 (27-rule check set `PSA1001`..`PSA6006`, **0 errors** with a documented baseline of warnings/info — see `SPEC.md` §A.11.5). `psa.py` is maintained as a canonical artifact in the [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) repository; obtain it per `SPEC.md` §A.11 before running.
+1. **Static analysis** with `psa.py` v3.0.0 (27-rule check set `PSA1001`..`PSA6006`, **0 errors** with a documented baseline of warnings/info — see `SPEC.md` §A.11.5). `psa.py` is maintained as a canonical artifact in the [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) repository; obtain it per `SPEC.md` §A.11 before running.
 2. **Code review** of the AMD-published `quicktest.py` NPU detection logic translated to PowerShell.
 3. **Dry-run on EPYC AWS hosts** with `-AssumeIfMissing` to confirm the pipeline runs to V06 without the NPU device being present.
 4. **No `-Action Install` execution** has been performed by the maintainers anywhere.
@@ -444,7 +444,7 @@ In other words, **PrepareVerify on Win11 24H2 functions as pre-migration verific
 
 | Verification activity | Status | Evidence |
 |---|---|---|
-| Static analysis with `psa.py` v2.3.0 (see `SPEC.md` §A.11) | ✅ done | 0 errors / 17 warnings / 0 info — fully baselined (see §A.11.5) |
+| Static analysis with `psa.py` v3.0.0 (see `SPEC.md` §A.11) | ✅ done | 0 errors / 17 warnings / 0 info — fully baselined (see §A.11.5) |
 | Code review of NPU detection logic | ✅ done | `Get-AmdNpuPlatform` is a direct PowerShell port of AMD-published `quicktest.py` |
 | Pipeline soundness on AWS EPYC EC2 (NPU absent) | ⚠️ partial / planned | `-Action PrepareVerify -AssumeIfMissing` should run to V06 cleanly; not yet exercised in CI |
 | Detection on physical NPU machine | ❌ **NOT DONE** | No physical NPU hardware in maintainer's lab as of this writing |

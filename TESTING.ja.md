@@ -23,7 +23,7 @@
 
 NPU スクリプトの検証は現時点で以下に限定されています:
 
-1. **静的解析** を `psa.py` v2.3.0 (27 ルール体系 `PSA1001`〜`PSA6006`) で実施 (**errors 0** + warnings / info はベースライン化 — `SPEC.ja.md` §A.11.5 参照)。 `psa.py` は [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) レポジトリで canonical artifact として管理されているため、 実行前に `SPEC.ja.md` §A.11 の手順で取得してください。
+1. **静的解析** を `psa.py` v3.0.0 (27 ルール体系 `PSA1001`〜`PSA6006`) で実施 (**errors 0** + warnings / info はベースライン化 — `SPEC.ja.md` §A.11.5 参照)。 `psa.py` は [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) レポジトリで canonical artifact として管理されているため、 実行前に `SPEC.ja.md` §A.11 の手順で取得してください。
 2. **コードレビュー** — AMD 公開の `quicktest.py` の NPU 検出ロジックを PowerShell に翻訳した実装をレビュー。
 3. **EPYC AWS ホストでの dry-run** — `-AssumeIfMissing` 付きで NPU デバイス不在環境にて V06 まで通ることを確認。
 4. **`-Action Install` の実行はメンテナーによって一切行われていません。**
@@ -444,7 +444,7 @@ Install 系 phase は自動ブロック (`-AllowWorkstationInstall` で override
 
 | 検証活動 | ステータス | 根拠 |
 |---|---|---|
-| `psa.py` v2.3.0 での静的解析 (`SPEC.ja.md` §A.11 参照) | ✅ 完了 | errors 0 / warnings 17 / info 0 — 全件ベースライン化済み (§A.11.5 参照) |
+| `psa.py` v3.0.0 での静的解析 (`SPEC.ja.md` §A.11 参照) | ✅ 完了 | errors 0 / warnings 17 / info 0 — 全件ベースライン化済み (§A.11.5 参照) |
 | NPU 検出ロジックのコードレビュー | ✅ 完了 | `Get-AmdNpuPlatform` は AMD 公開の `quicktest.py` を PowerShell に直接ポート |
 | AWS EPYC EC2 (NPU 不在) でのパイプライン健全性 | ⚠️ 部分的 / 計画段階 | `-Action PrepareVerify -AssumeIfMissing` が V06 までクリーンに動作する想定だが、CI ではまだ未実行 |
 | 物理 NPU マシンでの検出 | ❌ **未実施** | 本ドキュメント作成時点でメンテナーの lab に物理 NPU ハードウェアが無い |

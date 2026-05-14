@@ -760,18 +760,18 @@ python3 psa.py Deploy-AMDNpuDriverOnWindowsServer.ps1
 
 #### 実施チェック
 
-| Code | 重要度 | 内容 |
+`psa.py` v3.0.0 は `PSA1001`〜`PSA6006` の 27 ルール体系を 6 カテゴリに分けて実装しています:
+
+| カテゴリ | コード範囲 | 例 |
 | --- | --- | --- |
-| C1 | error | 中括弧 `{` `}` のバランス |
-| C2 | error | 丸括弧 `(` `)` のバランス |
-| C3 | error | 角括弧 `[` `]` のバランス |
-| C4 | warning | 未定義変数の参照 (heuristic) |
-| C5 | warning | 自動変数の shadowing (`$args`、`$_`、`$matches` 等) |
-| C6 | warning | `Start-Process -ArgumentList` (空白を含むパスでは `ProcessStartInfo` 推奨) |
-| C7 | warning | bare `$variable` に対する `-match` ($null だと true を返す問題) |
-| C8 | info | TODO / FIXME マーカー |
-| C9 | warning | 空行直前の trailing backtick (継続行) |
-| C10 | warning | 空文字列に対する `-match` (常に true) |
+| 構文の整合性          | `PSA1001`〜`PSA1003` | 中括弧 / 丸括弧 / 角括弧のバランス |
+| 意味解析              | `PSA2001`〜`PSA2006` | 未定義変数、自動変数の shadowing、bare `$variable` に対する `-match`、`$null` を `-eq`/`-ne` の右辺に置く問題、条件式内の代入 / リダイレクト |
+| スタイル              | `PSA3001`〜`PSA3004` | `Start-Process -ArgumentList` (空白を含むパスでは `ProcessStartInfo` 推奨)、空行直前の trailing backtick、空文字列に対する `-match` (常に true)、空 `catch` ブロック |
+| 衛生                  | `PSA4001`〜`PSA4004` | 未完了マーカー (TODO / FIXME / XXX / HACK)、行末空白、長い行、行末セミコロン |
+| セキュリティ          | `PSA5001`〜`PSA5004` | 平文パスワードパラメーター、`Invoke-Expression`、壊れたハッシュアルゴリズム、`ComputerName` ハードコード |
+| ベストプラクティス    | `PSA6001`〜`PSA6006` | 非承認動詞、コマンドレットエイリアス、複数形名詞の関数名、`$global:` 定義、必須パラメーターのデフォルト値、`$true` がデフォルトのスイッチパラメーター |
+
+各ルールの正規仕様は、[ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) レポジトリの [`scripts/python/powershell-static-analyzer/SPEC.ja.md`](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/SPEC.ja.md) §4 を参照。
 
 終了コード: `0` = clean、`1` = warnings のみ、`2` = errors。CI で利用可能:
 
