@@ -855,19 +855,33 @@ If you are adding a new feature, the recommended workflow is: read `SPEC.md` →
 
 ## File encoding
 
-All `*.ps1` files in this repository are stored as **UTF-8 with BOM** (`utf-8-bom`), which is the canonical encoding for PowerShell 5.1 + 7.x scripts that contain non-ASCII characters (the Japanese log strings inside `Write-Skip` / `Write-Warn2` calls). The `.gitattributes` file enforces this on commit:
+### PowerShell scripts (`*.ps1`)
+
+All `*.ps1` files in this repository are **checked out as UTF-8 with BOM and CRLF line endings** on every platform. This is the canonical encoding for PowerShell 5.1 + 7.x scripts that contain non-ASCII characters (the Japanese log strings inside `Write-Skip` / `Write-Warn2` calls). The `.gitattributes` rule that enforces this is:
 
 ```
 *.ps1 text working-tree-encoding=UTF-8 eol=crlf
 ```
 
-All `*.md` files (including `README.md`, `README.ja.md`, `TESTING.md`, `TESTING.ja.md`, `SPEC.md`, `SPEC.ja.md`) are stored as **UTF-8 without BOM** with **LF** line endings — the GitHub-native convention for Markdown rendering. The `.gitattributes` rule:
+A note on git's internal storage: git applies standard text normalization at commit time. The blob inside the repository stores **BOM + LF** (line endings normalized to LF). On `git clone` / `git checkout`, git converts LF back to CRLF for `*.ps1` files thanks to the `eol=crlf` directive, so the file on disk is **BOM + CRLF** — which is what Windows PowerShell expects. The BOM is preserved as content bytes in both forms.
+
+**Caveat for raw downloads**: if you download a `.ps1` file via the GitHub "Raw" button or `curl https://raw.githubusercontent.com/.../*.ps1`, you receive the blob form directly (**BOM + LF**) — git's checkout-time conversion does not apply to raw blob downloads. PowerShell 5.1 and 7.x handle both LF and CRLF in scripts correctly, so the file still executes, but if you need the exact canonical form (BOM + CRLF) you should clone the repository rather than downloading individual raw files. Practical recommendations:
+
+- **For execution on Windows**: clone the repo (`git clone https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer.git`), don't right-click → "Save raw as" individual files.
+- **For inspection or quick patching**: raw downloads are fine; PowerShell tolerates LF line endings.
+- **For re-publication or mirroring**: if you re-host the scripts elsewhere, regenerate them as BOM + CRLF to match the canonical form.
+
+### Markdown documents (`*.md`)
+
+All `*.md` files (including `README.md`, `README.ja.md`, `TESTING.md`, `TESTING.ja.md`, `SPEC.md`, `SPEC.ja.md`, `CONTRIBUTING.md`) are stored and checked out as **UTF-8 without BOM** with **LF** line endings — the GitHub-native convention for Markdown rendering. The `.gitattributes` rule:
 
 ```
 *.md text eol=lf
 ```
 
-If you edit these files on Windows with an editor that auto-injects a BOM into `.md` files (some older Notepad++ versions do this), strip it before committing or let `.gitattributes` normalize.
+If you edit these files on Windows with an editor that auto-injects a BOM into `.md` files (some older Notepad++ versions do this), strip the BOM before committing or let `.gitattributes` normalize on next checkout.
+
+### Console output and the Japanese log strings
 
 The Japanese log strings inside the `.ps1` scripts are designed to render correctly on a ja-JP Windows console that is set to UTF-8 (`chcp 65001`). If your console is at the default ja-JP code page (932 / Shift-JIS), Japanese strings may garble. The scripts include a `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` call in P00 to enforce this, but if you redirect output to a file via `*>&1 | Tee-Object`, set your file encoding explicitly to UTF-8 to avoid double-encoding.
 
