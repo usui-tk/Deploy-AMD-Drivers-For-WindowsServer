@@ -16,9 +16,11 @@ This document consolidates the validation results for `Deploy-AMD-Drivers-For-Wi
 
 | Script | Physical-hardware validation | Real driver install on target HW | Recommended use |
 |---|---|---|---|
-| **Chipset (r55)** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
-| **Graphics (r23)** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
+| **Chipset (r56)** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD (validated on r55; r56 carries a breaking install-decision change — see note below) | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
+| **Graphics (r24)** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD (validated on r23; r24 carries a breaking install-decision change — see note below) | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
 | **NPU (r6)** | ❌ **none** (no physical NPU machine in maintainer's lab) | ❌ **never executed** | **Experimental / research-grade only. Do not deploy in production.** |
+
+> **Note on r56 / r24 behaviour change**: The category-priority override added in chipset r56 and graphics r24 (see SPEC §D.15) changes the install-decision semantics in a breaking way: self-signed `[C]` drivers now always supersede Microsoft generic `[A]` and vendor `[B]` drivers regardless of version. The pre-r56/r23 physical-hardware validation results below remain *structurally* valid (extraction, patching, signing, WDAC deployment all behave the same), but the **V05/V06/I03 driver-install decisions will differ** — devices that the prior versions classified as `SKIP-newer` are now classified as `INSTALL_UPGRADE`. Re-validation on the M75q Tiny Gen 2 and X13 Gen 1 AMD fixtures is recommended after deploying r56/r24.
 
 The NPU script's verification is currently limited to:
 

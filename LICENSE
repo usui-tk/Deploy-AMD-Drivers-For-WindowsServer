@@ -24,11 +24,15 @@ SOFTWARE.
 
 Additional Notices (informational, not part of the MIT license terms):
 
-This repository's PowerShell scripts download AMD installer EXEs at runtime
-from amd.com. The scripts do NOT redistribute AMD's binaries, INF files, or
-catalog files. AMD's End User License Agreement (EULA) for the chipset and
-graphics installer packages applies independently to those files; users are
-responsible for reviewing and complying with AMD's terms.
+This repository's PowerShell scripts download AMD installer EXEs (chipset and
+graphics packages) and AMD Ryzen AI driver ZIPs (NPU script) at runtime from
+amd.com / account.amd.com. The scripts do NOT redistribute AMD's binaries,
+INF files, or catalog files. AMD's End User License Agreement (EULA) for the
+chipset, graphics, and Ryzen AI Software packages applies independently to
+those files; users are responsible for reviewing and complying with AMD's
+terms. The Ryzen AI EULA in particular must be accepted on account.amd.com
+before downloading; the NPU script's I00 phase requires explicit `I AGREE`
+confirmation that this acceptance has occurred.
 
 The scripts also generate a self-signed code-signing certificate and re-sign
 AMD's INF / .cat files using that certificate. By doing so, the user becomes

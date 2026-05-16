@@ -16,8 +16,8 @@
 
 | スクリプト | 物理ハードウェア検証 | ターゲット HW 上での実ドライバインストール | 推奨用途 |
 |---|---|---|---|
-| **Chipset (r55)** | ✓ M75q Tiny Gen 2、X13 Gen 1 AMD | ✓ M75q (WS2025) でインストール成功 | Lab + 慎重な production |
-| **Graphics (r23)** | ✓ M75q Tiny Gen 2、X13 Gen 1 AMD | ✓ M75q (WS2025) でインストール成功 | Lab + 慎重な production |
+| **Chipset (r56)** | ✓ M75q Tiny Gen 2、X13 Gen 1 AMD (r55 で検証済み; r56 はインストール判定の破壊的変更あり — 下の注記参照) | ✓ M75q (WS2025) でインストール成功 | Lab + 慎重な production |
+| **Graphics (r24)** | ✓ M75q Tiny Gen 2、X13 Gen 1 AMD (r23 で検証済み; r24 はインストール判定の破壊的変更あり — 下の注記参照) | ✓ M75q (WS2025) でインストール成功 | Lab + 慎重な production |
 | **NPU (r6)** | ❌ **なし** (メンテナーの lab に物理 NPU マシンが存在しない) | ❌ **未実行** | **実験的・研究用途のみ。本番環境への deploy は不可。** |
 
 NPU スクリプトの検証は現時点で以下に限定されています:

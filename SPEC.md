@@ -64,8 +64,8 @@ These are the canonical sources of truth. **Pull from these directly; do not re-
 ### A.1.1 Reference scripts (phase / banner / log patterns)
 
 ```
-Deploy-AMDChipsetDriverOnWindowsServer.ps1   (the most mature implementation; canonical r55)
-Deploy-AMDGraphicsDriverOnWindowsServer.ps1  (graphics-specific platform detection; r23)
+Deploy-AMDChipsetDriverOnWindowsServer.ps1   (the most mature implementation; canonical r56)
+Deploy-AMDGraphicsDriverOnWindowsServer.ps1  (graphics-specific platform detection; r24)
 Deploy-AMDNpuDriverOnWindowsServer.ps1       (NPU script with 4-tier installer resolution; r6)
 ```
 
@@ -73,6 +73,7 @@ These 21-phase deployment scripts are the canonical source for:
 
 - `Write-PhaseHeader` / `Write-PhaseFooter` / `Format-Elapsed`
 - `Write-Step` / `Write-Ok` / `Write-Warn2` / `Write-Fail` / `Write-Skip`
+- `Write-Detail` (continuation-line helper introduced in chipset r56 / graphics r24; see §A.5)
 - `Write-SubHeader` / `Write-SubHeader2` (Level-1 / Level-2 in-phase banners)
 - Banner block layout (Magenta `=` × 72, script-tag line, phase entry / exit)
 - `Show-PowerShellEnvironment` (P00 environment dump)
@@ -80,6 +81,7 @@ These 21-phase deployment scripts are the canonical source for:
 - `Test-AdminPrivilege` (hard-fail check on non-elevated session)
 - `Set-NetworkProtocol` (TLS hardening)
 - `Show-RunSummary` (per-action summary with PhaseTimings + ScriptHash)
+- `Resolve-PerDeviceDriverDecision` / `Resolve-PerInfInstallDecision` (chipset r56 / graphics r24 category-priority override; see §D.15)
 
 When extending these scripts, **copy these helpers verbatim** from the most recent revision rather than re-implementing them.
 
@@ -290,6 +292,20 @@ Each phase result is recorded in `$Script:PhaseTimings` (`Add` of a `pscustomobj
 - `HH:mm:ss` is the current wall-clock time (host TZ).
 - `[+X.XXs]` is the elapsed time since `$Script:CurrentPhaseStart` (reset on every phase entry).
 - The marker / color combination is the only acceptable styling. Do not invent new markers (e.g. `[i]`, `[>]`, `[?]`); they break the visual scan pattern.
+
+### Continuation / detail lines (Write-Detail)
+
+Some output blocks (section-banner tables in `Show-PowerShellEnvironment`, `Show-OperatingSystemDetail`, `Show-SecureBootBaselineSnapshot`, P03 platform inventory, P05 INF inventory rows, V05 Dry-Run details, V06 hardware-impact rows, I00 review tables, etc.) emit lines that are visually subordinate to a preceding marker line or that fit naturally inside a `===` / `---` banner block. These lines do not need their own timestamp + marker prefix; doing so creates redundant noise and breaks the visual table layout.
+
+For these cases use the dedicated helper:
+
+| Helper          | Indent | Color (default) | Use                                                                                |
+| --------------- | ------ | --------------- | ---------------------------------------------------------------------------------- |
+| `Write-Detail`  | 4 sp.  | Gray            | Continuation row of a marker line, or interior row of a section-banner block       |
+
+`Write-Detail` introduced in Chipset r56 / Graphics r24 as the single sanctioned exception to the "every line has a marker" rule. It always prepends exactly 4 spaces and supports an optional `-Color <ConsoleColor>` parameter (defaulting to `Gray`) and a `-NoNewline` switch for label-then-value composition.
+
+**Forbidden**: bare `Write-Host "    ..."` calls. All such call sites were migrated to `Write-Detail` in the r56 / r24 sweep. Adding a new bare 4-space `Write-Host` is a SPEC violation and will be rejected in review.
 
 ### Banner helpers (Level-0 / Level-1 / Level-2)
 
@@ -585,15 +601,15 @@ explained in the commit message and either added here or fixed.
 
 | Script | Errors | Warnings | Info | Total |
 | ------ | -----: | -------: | ---: | ----: |
-| `Deploy-AMDChipsetDriverOnWindowsServer.ps1`  | **0** | 52 | 31 | 83 |
-| `Deploy-AMDGraphicsDriverOnWindowsServer.ps1` | **0** | 53 | 36 | 89 |
+| `Deploy-AMDChipsetDriverOnWindowsServer.ps1`  | **0** | 52 | 32 | 84 |
+| `Deploy-AMDGraphicsDriverOnWindowsServer.ps1` | **0** | 53 | 37 | 90 |
 | `Deploy-AMDNpuDriverOnWindowsServer.ps1`      | **0** | 26 |  0 | 26 |
 
 Breakdown by rule:
 
 | Rule (severity)                       | Chipset | Graphics | NPU | Disposition |
 | ------------------------------------- | ------: | -------: | --: | ----------- |
-| `PSA4004` (trailing semicolon, info)  |   31    |    36    |  0  | Cosmetic; existing style accumulated over many revisions. Not fixed in this sync. |
+| `PSA4004` (trailing semicolon, info)  |   32    |    37    |  0  | Cosmetic; existing style accumulated over many revisions. Not fixed in this sync. The +1 drift in chipset and graphics relative to the r55/r23 baseline came from the r56/r24 Write-Detail conversion sweep (one new auto-generated semicolon in the helper area). |
 | `PSA3004` (empty `catch`, warning)    |   28    |    28    |  9  | Mix of fail-soft retry and best-effort diagnostic capture. Not individually annotated in this sync. Counts re-measured under psa.py v3.1.0. The Chipset r55 / Graphics r23 `finally`-block lock-release catch is suppressed inline (`# psa-disable-line PSA3004`) so it does not contribute. |
 | `PSA6003` (plural function noun, w.)  |   14    |    15    | 13  | Existing public function names; renaming would be a breaking API change. |
 | `PSA2003` (warning)                   |    6    |     7    |  4  | All inspected sites use `-match` against a script-scope constant pattern that is never `$null`; the warning is technically true but operationally a known-good shape. |
@@ -790,7 +806,7 @@ When adding a fourth sister script, the 6 cross-script-identical functions are l
 
 ### Identification
 
-- **Current revision**: `chipset-2026.05.16-r55` (tag: `chipset-lock-release-and-log-aggregation-r55`)
+- **Current revision**: `chipset-2026.05.17-r56` (tag: `chipset-category-priority-and-detail-helper-r56`)
 - **Workspace**: `C:\AMD-Chipset-WS\`
 - **Self-signed cert subject**: `CN=AMD Chipset Driver Self-Sign (WS2025 Lab, At Own Risk)`
 - **Self-signed cert files**: `cert\AMD-Chipset-Driver-CodeSign.{pfx,cer}` (r48+; pre-r48 used `AMD-Driver-CodeSign.{pfx,cer}`)
@@ -961,7 +977,7 @@ Older AMD platforms (Renoir, Cezanne) will produce fewer device-driver matches i
 
 ### Identification
 
-- **Current revision**: `graphics-2026.05.16-r23` (tag: `graphics-lock-release-r23`)
+- **Current revision**: `graphics-2026.05.17-r24` (tag: `graphics-category-priority-and-detail-helper-r24`)
 - **Workspace**: `C:\AMD-Graphics-WS\`
 - **Self-signed cert subject**: `CN=AMD Graphics Driver Self-Sign (WS2025 Lab, At Own Risk)`
 - **Self-signed cert files**: `cert\AMD-Graphics-Driver-CodeSign.{pfx,cer}` (r17+; pre-r17 used `AMD-Driver-CodeSign.{pfx,cer}`)
@@ -1324,6 +1340,83 @@ The workspace already had a `logs\` subdirectory used by P08 (inf2cat), P09 (sig
 | `secureboot_ms_sample\*` (existing)   | `<WorkRoot>\secureboot_ms_sample\` | unchanged |
 
 **Scope**: Chipset only. Graphics does not use the InstallShield admin install / `msiexec /a` chain (its installer is a WIX BURN bootstrapper which uses a single `msiexec /i` invocation). NPU does not use any installer-level logging at this layer.
+
+---
+
+## D.15 Chipset r56 / Graphics r24 — Driver-category priority override (BREAKING) + Write-Detail helper
+
+**Summary**: Two coupled changes shipped together in a single commit.
+
+### 1. BREAKING: category-priority override in install decision
+
+**Symptom (pre-r56 / pre-r24)**: On a clean-installed Windows Server 2025 host where Windows had bound its in-box generic drivers (`machine.inf`, `pci.inf`, `hdaudbus.inf`, `cpu.inf`, `display.inf`, etc.) to AMD hardware, V05 / V06 / I03 routinely classified the patched AMD drivers as `SKIP-newer` and refused to install them. The cause is fundamental: Microsoft generic drivers use **OS-build versioning** (e.g. `10.0.26100.1150`) which numerically dominates AMD's **semantic versioning** (e.g. `1.0.47.1`, `5.43.0.0`). Pure version comparison therefore *never* replaces a Microsoft generic with an AMD-vendor driver.
+
+Reported example from a r55/r23 clean WS2025 install (Renoir / Ryzen 5 PRO 4650U):
+- `標準電源管理コントローラー` (Standard Power Management Controller) was bound to MS `machine.inf v10.0.26100.1150`. The patched `AmdMicroPEP.inf v1.0.47.1` was correctly classified as `[C] Self-signed` and the device was in scope, but I03 logged `SKIPPED (current driver is same/newer; skipping to avoid downgrade)`.
+- `マルチメディア コントローラー` (Multimedia Controller) had `[?] Unknown` driver and the patched `amdacpbus.inf` was likewise skipped because `Compare-InfDriverVer` returned 0 on the empty version string.
+
+**Fix (r56 / r24)**: Replaced the pure-version comparison in `Resolve-PerDeviceDriverDecision` and `Resolve-PerInfInstallDecision` with a **category-priority override**:
+
+```
+Priority order (high -> low):
+  [C] Self-signed (this script's output)   = highest
+  [B] Hardware vendor / IHV                = middle
+  [A] Microsoft (OS in-box)                = lowest
+  [?] Unknown / unsigned                   = treated as lowest
+```
+
+Because the TO-BE driver produced by this pipeline is always `[C]` (the patched INFs are signed with the script's own certificate at P07/P09), the rule simplifies to:
+
+- **AS-IS in `[A]` / `[B]` / `[?]`** → TO-BE `[C]` always WINS (install regardless of version comparison).
+- **AS-IS in `[C]`** → fall back to version comparison (avoid pointless reinstall of an earlier run's self-signed driver).
+
+This is implemented via `Get-DriverSourceCategory -Provider $cur.Provider -Signer $cur.Signer` called at the start of each decision function; the resulting `.Code` is checked against `'C'` before any `Compare-InfDriverVer` call.
+
+**Why this is a BREAKING change**: Previously the pipeline preserved AMD's official `[B]` Vendor drivers when they were the same or newer than the patched `[C]` Self-signed counterpart. Under r56/r24 those `[B]` drivers are also replaced. The operator-facing implication:
+
+- **Pro**: the documented behavior of "AMD self-signed drivers on AMD hardware" is now achievable on a clean Server 2025 install in a single `-Action All` run.
+- **Con**: any AMD vendor driver previously installed via Windows Update / OEM site will be overwritten by the script's self-signed version of the *same* underlying driver binaries (only the signature publisher changes). If the operator wanted to preserve a vendor driver, they must run `-Action PrepareVerify` first, inspect V06 Section 2, and decide whether to proceed.
+
+**Documentation implications**: the README's "Self-signed drivers are a LAST-RESORT gap-fill, NOT a primary install path" language continues to apply at the *recommendation* level (operators should still run Windows Update and OEM installers first), but the *script's decision logic* no longer enforces it via version comparison.
+
+**Scope**: Chipset and Graphics. The NPU script does not implement install-decision logic at this layer (`-Action Install` on NPU is gated by EULA acknowledgement and runs `pnputil` directly without per-INF version comparison) and is therefore unaffected.
+
+### 2. Write-Detail helper introduction (log-layout uniformity)
+
+**Symptom**: An audit of the chipset script counted 165 occurrences of bare `Write-Host "    ..."` (4-space indented plain text) and the graphics script 154, used in `Show-PowerShellEnvironment`, `Show-SecureBootBaselineSnapshot`, P03 platform inventory, P04 nested-MSI listing, P05 INF inventory table, V05 Dry-Run output, V06 hardware-impact rows, and I00 review. Each call duplicated the indent string and had no central control over color or alignment, making future column-layout tweaks impossible without touching every call site.
+
+**Fix (r56 / r24)**: Introduced `Write-Detail` immediately after `Write-Skip` in the output helper section:
+
+```powershell
+function Write-Detail {
+    param(
+        [Parameter(Position=0)][string]$Msg,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray,
+        [switch]$NoNewline
+    )
+    if ($NoNewline) {
+        Write-Host ("    {0}" -f $Msg) -ForegroundColor $Color -NoNewline
+    } else {
+        Write-Host ("    {0}" -f $Msg) -ForegroundColor $Color
+    }
+}
+```
+
+A one-off Python conversion script (`convert_writehost.py`) was used to mechanically rewrite the bulk of the call sites, with a handful of multi-line / backtick-continuation cases handled manually. The total per-file edits were ~165 line replacements for the chipset script and ~155 for the graphics script. After conversion, 0 bare 4-space `Write-Host` calls remain outside of `Write-Detail`'s own body.
+
+**Documented as the sanctioned exception**: SPEC §A.5 was updated to list `Write-Detail` as the single approved continuation-line helper. Bare `Write-Host "    ..."` is now a SPEC violation.
+
+**Scope**: Chipset and Graphics. The NPU script (currently r6) did not have the same accretion of bare `Write-Host` indentation patterns (audit count: 0) and was not modified; if a future r7+ revision introduces section-banner tables, it should adopt `Write-Detail` from the start.
+
+### 3. psa.py baseline drift after r56 / r24
+
+The mechanical conversion added ~1 trailing-semicolon info finding per file. Updated baseline per `§A.11.5`:
+
+| Script | Errors | Warnings | Info | Total |
+| ------ | -----: | -------: | ---: | ----: |
+| `Deploy-AMDChipsetDriverOnWindowsServer.ps1`  | **0** | 52 | 32 | 84 |
+| `Deploy-AMDGraphicsDriverOnWindowsServer.ps1` | **0** | 53 | 37 | 90 |
+| `Deploy-AMDNpuDriverOnWindowsServer.ps1`      | **0** | 26 |  0 | 26 |
 
 ---
 

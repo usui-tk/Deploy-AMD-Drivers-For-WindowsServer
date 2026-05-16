@@ -96,7 +96,7 @@ All three PowerShell scripts share the same 21-phase architecture, the same self
 
 > This section exists because the NPU script is materially riskier than its sister scripts and operators must understand the difference before running it.
 
-| Aspect | Chipset script (r55) | Graphics script (r23) | **NPU script (r6)** |
+| Aspect | Chipset script (r56) | Graphics script (r24) | **NPU script (r6)** |
 | --- | --- | --- | --- |
 | **Maturity** | Stable, multiple validation cycles | Stable, multiple validation cycles | **🆘 Experimental — first release, not validated on physical NPU hardware** |
 | **Distribution format** | Public EXE direct download | Public EXE direct download | **EULA-gated ZIP, requires AMD account** |
@@ -553,6 +553,8 @@ Every line written by the scripts follows a structured, time-stamped format that
 | `[X]`  | Red       | Fail     | `[X] Top-level error: AMD NPU not detected`                      |
 | `[~]`  | DarkGray  | Skip     | `[~] Inventory CSV: C:\AMD-NPU-WS\inf_inventory.csv`             |
 
+Continuation lines that sit inside a section-banner table (PowerShell environment dump, OS profile, Secure Boot baseline, INF inventory rows, V05 / V06 / I00 sub-blocks) are rendered via the `Write-Detail` helper, which emits a 4-space-indented line with no timestamp or marker prefix. This is the single sanctioned exception to the "every line has a marker" rule. Operators reading raw logs should treat any 4-space-indented line as visually subordinate to the most recent marker line above it. (Introduced in chipset r56 / graphics r24; see SPEC §A.5.)
+
 ### Sample output (NPU script, P00 → P03)
 
 ```
@@ -694,13 +696,15 @@ By running these scripts, you acknowledge:
 
 7. **The 5-year cert expiry is real.** Schedule a renewal task in your calendar for year 4.5 of any production deployment, or accept that drivers stop installing in year 5.
 
-8. **NPU script (`Deploy-AMDNpuDriverOnWindowsServer.ps1`) is markedly higher-risk than its sister scripts.** Specifically:
+8. **Driver-category priority override (chipset r56 / graphics r24 — BREAKING change).** From these revisions the script's install-decision logic ranks self-signed drivers ([C]) above hardware-vendor drivers ([B]) and Microsoft generic drivers ([A]), regardless of driver version. On a clean WS2025 install this is exactly the intent — Microsoft's in-box generics will be replaced by AMD-vendor drivers carrying the script's signature. The trade-off is that any AMD-vendor driver already installed via Windows Update or an OEM package will *also* be overwritten by the script's self-signed equivalent (the binaries are the same; only the publisher differs). If you want to preserve a vendor driver, run `-Action PrepareVerify` first, inspect V06 Section 2, and decide whether to proceed. See SPEC §D.15 for the full rationale.
+
+9. **NPU script (`Deploy-AMDNpuDriverOnWindowsServer.ps1`) is markedly higher-risk than its sister scripts.** Specifically:
    - **No physical-NPU validation** has been performed by the maintainers as of this writing. All testing has been static analysis with `psa.py` and code-review of the AMD-published `quicktest.py` detection logic translated to PowerShell.
    - **AMD account auto-download (Tier 2) is best-effort and may break without notice** when AMD updates `account.amd.com` form layouts, CSRF handling, or the entitlenow.com CDN URL scheme. Always prefer Tier 4 (`-OfflineZip`) for reproducible runs.
    - **Ryzen AI Software is officially Windows-11-only per AMD documentation** (build >= 22621.3527). Even if the NPU kernel driver loads on Windows Server 2025, the user-mode stack (Python conda env, ONNX Runtime VitisAI EP, OGA) is not expected to function. **Do not deploy the NPU script in environments expecting AI inference workloads on Server 2025.**
    - **Driver-store cleanup is best-effort.** Removing self-signed NPU drivers from the driver store after `-Action Install` may require manual `pnputil /delete-driver oemNN.inf /force` or use of Driver Store Explorer (Rapr.exe).
 
-9. **No commercial support is offered through this repository.** GitHub Issues at <https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer/issues> are best-effort for bug reports and clarification questions. Pull requests are welcome but not guaranteed to be reviewed on any timeline.
+10. **No commercial support is offered through this repository.** GitHub Issues at <https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer/issues> are best-effort for bug reports and clarification questions. Pull requests are welcome but not guaranteed to be reviewed on any timeline.
 
 ---
 

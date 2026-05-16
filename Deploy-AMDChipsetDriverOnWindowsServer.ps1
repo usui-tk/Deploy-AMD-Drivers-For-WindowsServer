@@ -562,8 +562,8 @@ $Script:PhaseTimings      = New-Object System.Collections.Generic.List[object]
 #                does NOT need manual bumping. If two users disagree
 #                about behaviour, comparing this hash tells them
 #                instantly whether they are running the same file.
-$Script:ScriptVersion = 'chipset-2026.05.16-r55'
-$Script:ScriptTag     = 'chipset-lock-release-and-log-aggregation-r55'
+$Script:ScriptVersion = 'chipset-2026.05.17-r56'
+$Script:ScriptTag     = 'chipset-category-priority-and-detail-helper-r56'
 $Script:ScriptHash    = '(unknown)'
 try {
     # $PSCommandPath is the full path to the running script. Falls
@@ -666,6 +666,40 @@ function Write-Ok    { param($Msg) _LogLine '[+]' $Msg 'Green'    }
 function Write-Warn2 { param($Msg) _LogLine '[!]' $Msg 'Yellow'   }
 function Write-Fail  { param($Msg) _LogLine '[X]' $Msg 'Red'      }
 function Write-Skip  { param($Msg) _LogLine '[~]' $Msg 'DarkGray' }
+
+function Write-Detail {
+    # ====================================================================
+    # Continuation / detail line for a preceding marker line, or a row
+    # inside a section banner block (Show-PowerShellEnvironment,
+    # Show-OperatingSystemDetail, Show-SecureBootBaselineSnapshot, etc.).
+    # Renders 4-space-indented plain text with NO timestamp or marker
+    # prefix, so it visually attaches to the preceding context.
+    #
+    # ---- r56: introduced to replace bare `Write-Host "    XXX"` calls ----
+    # Up to r55 the scripts emitted ~100 bare Write-Host calls with a
+    # hard-coded 4-space indent. Routing those through a single helper
+    # makes future column-layout tweaks possible without touching every
+    # call site, and gives the SPEC-mandated marker pattern a single
+    # documented exception ("continuation row of a marker line").
+    #
+    # The 4-space indent is intentional and matches the historical
+    # column convention used inside section-banner tables.
+    #
+    # -NoNewline mirrors Write-Host's switch and is used by two-part
+    # lines that compose a label-then-value pair (e.g. P08's
+    # "-> Selected /os :" + colored value).
+    # ====================================================================
+    param(
+        [Parameter(Position=0)][string]$Msg,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray,
+        [switch]$NoNewline
+    )
+    if ($NoNewline) {
+        Write-Host ("    {0}" -f $Msg) -ForegroundColor $Color -NoNewline
+    } else {
+        Write-Host ("    {0}" -f $Msg) -ForegroundColor $Color
+    }
+}
 
 function Write-PhaseHeader {
     param($Id, $Name, $Group)
@@ -946,7 +980,7 @@ function Show-DriverInstallationOrderNotice {
         Write-Host '      1. Install official VENDOR drivers (chipset/GPU/NIC) from manufacturer site' -ForegroundColor Yellow
         Write-Host '      2. Run Windows Update / Microsoft Update Catalog'                            -ForegroundColor Yellow
         Write-Host '      3. THEN run this script for any AMD devices still without a working driver' -ForegroundColor Yellow
-        Write-Host '    (Self-signed drivers are a LAST-RESORT gap-fill; OEM/MS-signed drivers win)'   -ForegroundColor DarkYellow
+        Write-Host '    (r56: at install-decision layer [C] self-signed outranks [B]/[A]; SPEC D.15)'   -ForegroundColor DarkYellow
         return
     }
 
@@ -954,10 +988,17 @@ function Show-DriverInstallationOrderNotice {
     Write-Host '+------------------------------------------------------------------------+' -ForegroundColor Yellow
     Write-Host '|  IMPORTANT: Recommended driver installation order                      |' -ForegroundColor Yellow
     Write-Host '+------------------------------------------------------------------------+' -ForegroundColor Yellow
-    Write-Host '|  This script produces SELF-SIGNED kernel-mode drivers. Self-signed    |' -ForegroundColor Yellow
-    Write-Host '|  drivers are a LAST-RESORT gap-fill measure, NOT a primary install    |' -ForegroundColor Yellow
-    Write-Host '|  path. Microsoft / OEM-signed drivers always rank higher in Windows''  |' -ForegroundColor Yellow
-    Write-Host '|  driver store and will (correctly) supersede self-signed ones.        |' -ForegroundColor Yellow
+    Write-Host '|  This script produces SELF-SIGNED kernel-mode drivers. The recommended |' -ForegroundColor Yellow
+    Write-Host '|  operator workflow is to use OEM / Windows Update drivers FIRST and    |' -ForegroundColor Yellow
+    Write-Host '|  reserve this script for devices those channels do not cover.         |' -ForegroundColor Yellow
+    Write-Host '|                                                                        |' -ForegroundColor Yellow
+    Write-Host '|  NOTE on r56 install-decision change (SPEC SS D.15):                   |' -ForegroundColor Yellow
+    Write-Host '|    Beginning with chipset r56, the script ranks [C] Self-signed       |' -ForegroundColor Yellow
+    Write-Host '|    HIGHER than [A] Microsoft-generic and [B] Vendor drivers at the    |' -ForegroundColor Yellow
+    Write-Host '|    install-decision layer, regardless of version. The recommendation  |' -ForegroundColor Yellow
+    Write-Host '|    below still keeps the trust surface small, but it is no longer    |' -ForegroundColor Yellow
+    Write-Host '|    enforced by version comparison: any [A]/[B] driver matched by a    |' -ForegroundColor Yellow
+    Write-Host '|    patched INF WILL be replaced by [C] when I03 runs.                 |' -ForegroundColor Yellow
     Write-Host '|                                                                        |' -ForegroundColor Yellow
     Write-Host '|  Pre-install workflow (in order):                                      |' -ForegroundColor Yellow
     Write-Host '|                                                                        |' -ForegroundColor Yellow
@@ -971,17 +1012,17 @@ function Show-DriverInstallationOrderNotice {
     Write-Host '|                                                                        |' -ForegroundColor Yellow
     Write-Host '|    Step 3.  Inspect Device Manager. Confirm "Unknown device" /        |' -ForegroundColor Yellow
     Write-Host '|             "yellow-bang" entries - those are what this script        |' -ForegroundColor Yellow
-    Write-Host '|             should cover. Devices already served by Steps 1-2 should  |' -ForegroundColor Yellow
-    Write-Host '|             NOT be replaced by self-signed drivers.                   |' -ForegroundColor Yellow
+    Write-Host '|             should cover. Run -Action PrepareVerify and inspect V06   |' -ForegroundColor Yellow
+    Write-Host '|             Section 2 to see exactly which [A]/[B] drivers r56 will   |' -ForegroundColor Yellow
+    Write-Host '|             replace with [C] before committing to -Action Install.    |' -ForegroundColor Yellow
     Write-Host '|                                                                        |' -ForegroundColor Yellow
     Write-Host '|    Step 4.  AFTER Steps 1-3 are complete, run THIS script.            |' -ForegroundColor Yellow
     Write-Host '|                                                                        |' -ForegroundColor Yellow
-    Write-Host '|  Why this order matters:                                               |' -ForegroundColor Yellow
+    Write-Host '|  Why this order still matters under r56:                              |' -ForegroundColor Yellow
     Write-Host '|    - V06 (HardwareImpactAnalysis) and I04 (PostInstallVerification)   |' -ForegroundColor Yellow
     Write-Host '|      ASSUME the system is already in its baseline driven state.       |' -ForegroundColor Yellow
-    Write-Host '|      If you skip Steps 1-2, the AS-IS / TO-BE comparison will be      |' -ForegroundColor Yellow
-    Write-Host '|      misleading (devices that should not be in scope appear as if     |' -ForegroundColor Yellow
-    Write-Host '|      they are).                                                        |' -ForegroundColor Yellow
+    Write-Host '|      If you skip Steps 1-2, more devices fall into the "replaced by   |' -ForegroundColor Yellow
+    Write-Host '|      [C]" bucket than necessary, growing the trust surface.           |' -ForegroundColor Yellow
     Write-Host '|    - Self-signed drivers expand the trust surface only to devices we  |' -ForegroundColor Yellow
     Write-Host '|      genuinely cannot solve any other way. Doing Steps 1-2 first      |' -ForegroundColor Yellow
     Write-Host '|      keeps that surface small.                                         |' -ForegroundColor Yellow
@@ -1572,7 +1613,7 @@ function Show-SecureBootBaselineSnapshot {
         $msTag = if ($ms -and $ms.Available) { 'MS-sample=ok' }
                  elseif ($Snapshot.MsInfo.Present) { 'MS-sample=present(err)' }
                  else { 'MS-sample=absent' }
-        Write-Host ("    Secure Boot baseline: enabled={0,-5} UEFI-CA-2023={1,-12} health={2,-8} [{3}]" -f $sb, $u2023, $health, $msTag) -ForegroundColor $healthColor
+        Write-Detail ("Secure Boot baseline: enabled={0,-5} UEFI-CA-2023={1,-12} health={2,-8} [{3}]" -f $sb, $u2023, $health, $msTag) -Color $healthColor
         return
     }
 
@@ -1583,58 +1624,58 @@ function Show-SecureBootBaselineSnapshot {
     # banner that was visible in the r49 first release.
     Write-Host ("  Overall health     : {0}" -f $health) -ForegroundColor $healthColor
     foreach ($r in $Snapshot.Reasons) {
-        Write-Host ("    - {0}" -f $r) -ForegroundColor $healthColor
+        Write-Detail ("- {0}" -f $r) -Color $healthColor
     }
     Write-Host ''
     Write-Host '  [Embedded inventory]'
-    Write-Host ("    Secure Boot enabled              : {0}" -f $(if ($null -eq $emb.SecureBootEnabled) { 'unknown' } else { $emb.SecureBootEnabled }))
+    Write-Detail ("Secure Boot enabled              : {0}" -f $(if ($null -eq $emb.SecureBootEnabled) { 'unknown' } else { $emb.SecureBootEnabled }))
     if ($emb.SecureBootDetectError) {
-        Write-Host ("      Detect error: {0}" -f $emb.SecureBootDetectError) -ForegroundColor DarkGray
+        Write-Detail ("  Detect error: {0}" -f $emb.SecureBootDetectError) -Color DarkGray
     }
-    Write-Host ("    Windows UEFI CA 2023 (db, 1P)    : {0}" -f $(if ($null -eq $emb.FirstPartyDB2023Updated)  { 'n/a' } elseif ($emb.FirstPartyDB2023Updated  -eq 1) { 'present'    } else { 'NOT present' }))
-    Write-Host ("    Microsoft KEK 2K CA 2023 (KEK,1P): {0}" -f $(if ($null -eq $emb.FirstPartyKEK2023Updated) { 'n/a' } elseif ($emb.FirstPartyKEK2023Updated -eq 1) { 'present'    } else { 'NOT present' }))
-    Write-Host ("    Microsoft UEFI CA 2011 (db, 3P)  : {0}" -f $(if ($null -eq $emb.ThirdParty2011CAPresent)  { 'n/a' } elseif ($emb.ThirdParty2011CAPresent  -eq 1) { 'present (3P trusted)' } else { 'not present (1P-only trust)' }))
+    Write-Detail ("Windows UEFI CA 2023 (db, 1P)    : {0}" -f $(if ($null -eq $emb.FirstPartyDB2023Updated)  { 'n/a' } elseif ($emb.FirstPartyDB2023Updated  -eq 1) { 'present'    } else { 'NOT present' }))
+    Write-Detail ("Microsoft KEK 2K CA 2023 (KEK,1P): {0}" -f $(if ($null -eq $emb.FirstPartyKEK2023Updated) { 'n/a' } elseif ($emb.FirstPartyKEK2023Updated -eq 1) { 'present'    } else { 'NOT present' }))
+    Write-Detail ("Microsoft UEFI CA 2011 (db, 3P)  : {0}" -f $(if ($null -eq $emb.ThirdParty2011CAPresent)  { 'n/a' } elseif ($emb.ThirdParty2011CAPresent  -eq 1) { 'present (3P trusted)' } else { 'not present (1P-only trust)' }))
     if ($emb.ThirdParty2023CertsRequired -eq 1) {
-        Write-Host ("    Microsoft UEFI CA 2023 (db, 3P)        : {0}" -f $(if ($null -eq $emb.ThirdParty2023CertUpdated)          { 'n/a' } elseif ($emb.ThirdParty2023CertUpdated          -eq 1) { 'present' } else { 'NOT present' }))
-        Write-Host ("    Microsoft Option ROM UEFI CA 2023 (3P) : {0}" -f $(if ($null -eq $emb.ThirdPartyOptionRom2023CertUpdated) { 'n/a' } elseif ($emb.ThirdPartyOptionRom2023CertUpdated -eq 1) { 'present' } else { 'NOT present' }))
+        Write-Detail ("Microsoft UEFI CA 2023 (db, 3P)        : {0}" -f $(if ($null -eq $emb.ThirdParty2023CertUpdated)          { 'n/a' } elseif ($emb.ThirdParty2023CertUpdated          -eq 1) { 'present' } else { 'NOT present' }))
+        Write-Detail ("Microsoft Option ROM UEFI CA 2023 (3P) : {0}" -f $(if ($null -eq $emb.ThirdPartyOptionRom2023CertUpdated) { 'n/a' } elseif ($emb.ThirdPartyOptionRom2023CertUpdated -eq 1) { 'present' } else { 'NOT present' }))
     }
-    Write-Host ("    UEFI CA 2023 status (registry)         : {0}" -f $(if ($emb.UEFICA2023Status)     { $emb.UEFICA2023Status     } else { 'n/a' }))
+    Write-Detail ("UEFI CA 2023 status (registry)         : {0}" -f $(if ($emb.UEFICA2023Status)     { $emb.UEFICA2023Status     } else { 'n/a' }))
     if ($emb.UEFICA2023Error) {
-        Write-Host ("    UEFI CA 2023 error code                : {0}" -f $emb.UEFICA2023Error) -ForegroundColor Yellow
+        Write-Detail ("UEFI CA 2023 error code                : {0}" -f $emb.UEFICA2023Error) -Color Yellow
     }
-    Write-Host ("    AvailableUpdates / Policy              : {0} / {1}" -f $(if ($emb.AvailableUpdatesHex)       { $emb.AvailableUpdatesHex       } else { 'n/a' }), $(if ($emb.AvailableUpdatesPolicyHex) { $emb.AvailableUpdatesPolicyHex } else { 'n/a' }))
-    Write-Host ("    Secure-Boot-Update scheduled task      : {0}" -f $(
+    Write-Detail ("AvailableUpdates / Policy              : {0} / {1}" -f $(if ($emb.AvailableUpdatesHex)       { $emb.AvailableUpdatesHex       } else { 'n/a' }), $(if ($emb.AvailableUpdatesPolicyHex) { $emb.AvailableUpdatesPolicyHex } else { 'n/a' }))
+    Write-Detail ("Secure-Boot-Update scheduled task      : {0}" -f $(
         if (-not $emb.SecureBootTaskExists) { 'task not present' }
         elseif ($null -eq $emb.SecureBootTaskEnabled) { "state=$($emb.SecureBootTaskStatus) (enabled-check skipped)" }
         elseif ($emb.SecureBootTaskEnabled) { "Ready/Running (state=$($emb.SecureBootTaskStatus))" }
         else { "Not running (state=$($emb.SecureBootTaskStatus))" }
     ))
     if ($emb.CanAttemptUpdateAfter) {
-        Write-Host ("    CanAttemptUpdateAfter (UTC)            : {0}" -f $emb.CanAttemptUpdateAfter) -ForegroundColor DarkGray
+        Write-Detail ("CanAttemptUpdateAfter (UTC)            : {0}" -f $emb.CanAttemptUpdateAfter) -Color DarkGray
     }
     Write-Host ''
     Write-Host '  [Microsoft sample script (KB5089549+ delivery)]'
     if (-not $Snapshot.MsInfo.Present) {
         Write-Host '    Not deployed on this host.' -ForegroundColor DarkGray
-        Write-Host ("    (Expected path: {0})" -f $Snapshot.MsInfo.RootPath) -ForegroundColor DarkGray
+        Write-Detail ("(Expected path: {0})" -f $Snapshot.MsInfo.RootPath) -Color DarkGray
         Write-Host '    Embedded inventory above is the sole source.' -ForegroundColor DarkGray
     } elseif (-not $ms -or -not $ms.Available) {
         Write-Host ('    Script present but invocation failed.') -ForegroundColor Yellow
         if ($ms -and $ms.ErrorMessage) {
-            Write-Host ("      Reason: {0}" -f $ms.ErrorMessage) -ForegroundColor Yellow
+            Write-Detail ("  Reason: {0}" -f $ms.ErrorMessage) -Color Yellow
         }
     } else {
         $d = $ms.Data
         Write-Host ('    Script invoked successfully.') -ForegroundColor Green
-        Write-Host ("    Script path  : {0}" -f $ms.ScriptPath) -ForegroundColor DarkGray
-        Write-Host ("    JSON path    : {0}" -f $ms.JsonPath) -ForegroundColor DarkGray
-        Write-Host ("    BucketId     : {0}" -f $(if ($d.BucketId) { $d.BucketId } else { 'n/a' }))
-        Write-Host ("    Confidence   : {0}" -f $(if ($d.Confidence) { $d.Confidence } else { 'n/a' }))
+        Write-Detail ("Script path  : {0}" -f $ms.ScriptPath) -Color DarkGray
+        Write-Detail ("JSON path    : {0}" -f $ms.JsonPath) -Color DarkGray
+        Write-Detail ("BucketId     : {0}" -f $(if ($d.BucketId) { $d.BucketId } else { 'n/a' }))
+        Write-Detail ("Confidence   : {0}" -f $(if ($d.Confidence) { $d.Confidence } else { 'n/a' }))
         if ($d.SkipReasonKnownIssue) {
-            Write-Host ("    SkipReason   : {0}" -f $d.SkipReasonKnownIssue) -ForegroundColor Yellow
+            Write-Detail ("SkipReason   : {0}" -f $d.SkipReasonKnownIssue) -Color Yellow
         }
         if ($d.KnownIssueId) {
-            Write-Host ("    KnownIssueId : {0}" -f $d.KnownIssueId) -ForegroundColor Yellow
+            Write-Detail ("KnownIssueId : {0}" -f $d.KnownIssueId) -Color Yellow
         }
         $evtFields = @('Event1801Count','Event1808Count','Event1795Count','Event1796Count','Event1800Count','Event1802Count','Event1803Count')
         $evtParts = foreach ($f in $evtFields) {
@@ -1642,7 +1683,7 @@ function Show-SecureBootBaselineSnapshot {
             if ($v -and ([int]$v -gt 0)) { ("{0}={1}" -f ($f -replace 'Count$',''), $v) }
         }
         if ($evtParts) {
-            Write-Host ("    Events       : {0}" -f ($evtParts -join '  '))
+            Write-Detail ("Events       : {0}" -f ($evtParts -join '  '))
         }
         if ($d.MissingKEK) {
             Write-Host '    MissingKEK   : TRUE (OEM needs to supply PK-signed KEK)' -ForegroundColor Yellow
@@ -3159,7 +3200,7 @@ function Invoke-WingetSilently {
     foreach ($rawLine in ($output -split "`r?`n")) {
         if ([string]::IsNullOrWhiteSpace($rawLine)) { continue }
         if ($rawLine -match $noisePattern)          { continue }
-        Write-Host "    $rawLine" -ForegroundColor DarkGray
+        Write-Detail "$rawLine" -Color DarkGray
     }
     return $exit
 }
@@ -3236,9 +3277,9 @@ function Get-LatestSevenZipUrl {
 function Install-SevenZipFallback {
     param([string]$DownloadDir)
     $info = Get-LatestSevenZipUrl
-    Write-Host "    Version : $($info.Version)"
-    Write-Host "    Source  : $($info.Source)"
-    Write-Host "    URL     : $($info.MsiUrl)"
+    Write-Detail "Version : $($info.Version)"
+    Write-Detail "Source  : $($info.Source)"
+    Write-Detail "URL     : $($info.MsiUrl)"
     $msi = Join-Path $DownloadDir (Split-Path $info.MsiUrl -Leaf)
     if (-not (Test-Path $msi)) {
         Invoke-WebRequest -Uri $info.MsiUrl -OutFile $msi -UseBasicParsing
@@ -3249,8 +3290,8 @@ function Install-SevenZipFallback {
 
 function Install-WindowsSdkFallback {
     param($OsContext, [string]$DownloadDir)
-    Write-Host "    Target build : $($OsContext.SdkBuild)"
-    Write-Host "    URL          : $($OsContext.SdkUrl)"
+    Write-Detail "Target build : $($OsContext.SdkBuild)"
+    Write-Detail "URL          : $($OsContext.SdkUrl)"
     $exe = Join-Path $DownloadDir "winsdksetup_$($OsContext.Code).exe"
     if (-not (Test-Path $exe)) {
         Invoke-WebRequest -Uri $OsContext.SdkUrl -OutFile $exe -UseBasicParsing
@@ -3272,8 +3313,8 @@ function Install-WindowsSdkFallback {
 
 function Install-WindowsWdkFallback {
     param($OsContext, [string]$DownloadDir)
-    Write-Host "    Target build : $($OsContext.WdkBuild)"
-    Write-Host "    URL          : $($OsContext.WdkUrl)"
+    Write-Detail "Target build : $($OsContext.WdkBuild)"
+    Write-Detail "URL          : $($OsContext.WdkUrl)"
     $exe = Join-Path $DownloadDir "wdksetup_$($OsContext.Code).exe"
     if (-not (Test-Path $exe)) {
         Invoke-WebRequest -Uri $OsContext.WdkUrl -OutFile $exe -UseBasicParsing
@@ -3658,7 +3699,7 @@ function Get-LatestAmdChipsetUrl {
 
     Write-Host '    Probe results:' -ForegroundColor DarkGray
     foreach ($s in $perPage) {
-        Write-Host ("      [{0,-50}] hits={1}" -f $s.Page, $s.Found) -ForegroundColor DarkGray
+        Write-Detail ("  [{0,-50}] hits={1}" -f $s.Page, $s.Found) -Color DarkGray
     }
 
     if ($allHits.Count -gt 0) {
@@ -3763,7 +3804,7 @@ function Expand-AmdInstaller {
     }
 
     # ---------- Strategy 1/3: 7-Zip auto-detect ----------
-    Write-Host "    Strategy 1/3: 7-Zip auto-detect" -ForegroundColor DarkGray
+    Write-Detail "Strategy 1/3: 7-Zip auto-detect" -Color DarkGray
     & $SevenZipPath x $InstallerPath "-o$DestinationPath" -y -bsp0 -bso0 2>$null | Out-Null
     $exit1 = $LASTEXITCODE
     if ($exit1 -eq 0 -and (_HasPayload $DestinationPath)) {
@@ -3780,7 +3821,7 @@ function Expand-AmdInstaller {
     # recursively invokes `msiexec /a` on each sub-MSI to fully unpack
     # the OS-specific W11x64 / WTx64 / WTx86 INF tree. See
     # Expand-AmdInstaller_ViaInstallShield for the full doc block.
-    Write-Host "    Strategy 2/3: InstallShield /a admin install (AMD 8.x+ chain)" -ForegroundColor DarkGray
+    Write-Detail "Strategy 2/3: InstallShield /a admin install (AMD 8.x+ chain)" -Color DarkGray
     try {
         Expand-AmdInstaller_ViaInstallShield -InstallerPath $InstallerPath `
                                              -DestinationPath $DestinationPath `
@@ -3798,7 +3839,7 @@ function Expand-AmdInstaller {
     _ClearDest
 
     # ---------- Strategy 3/3: launch + watch (final fallback) ----------
-    Write-Host "    Strategy 3/3: launch installer and harvest from C:\AMD\" -ForegroundColor DarkGray
+    Write-Detail "Strategy 3/3: launch installer and harvest from C:\AMD\" -Color DarkGray
     Expand-AmdInstaller_ViaLaunch -InstallerPath $InstallerPath -DestinationPath $DestinationPath
     if (-not (_HasPayload $DestinationPath)) {
         throw "All three extraction strategies failed for $InstallerPath. The installer format may be unsupported by this script. As a workaround, manually extract the installer payload to $DestinationPath (or to C:\AMD\<anything>) and re-run with -OnlyPhases P05+."
@@ -3898,18 +3939,18 @@ function Expand-AmdInstaller_ViaLaunch {
     $amdRoot = 'C:\AMD'
 
     # ---- Pre-launch state dump ----
-    Write-Host "    Pre-launch state of ${amdRoot}:" -ForegroundColor DarkGray
+    Write-Detail "Pre-launch state of ${amdRoot}:" -Color DarkGray
     if (Test-Path $amdRoot) {
         $existing = @(Get-ChildItem $amdRoot -Directory -ErrorAction SilentlyContinue)
         if ($existing.Count -eq 0) {
-            Write-Host "      (empty)" -ForegroundColor DarkGray
+            Write-Detail "  (empty)" -Color DarkGray
         } else {
             foreach ($d in $existing) {
-                Write-Host ("      [{0,-30}] mtime={1:yyyy-MM-dd HH:mm:ss}" -f $d.Name, $d.LastWriteTime) -ForegroundColor DarkGray
+                Write-Detail ("  [{0,-30}] mtime={1:yyyy-MM-dd HH:mm:ss}" -f $d.Name, $d.LastWriteTime) -Color DarkGray
             }
         }
     } else {
-        Write-Host "      ($amdRoot does not exist yet - will be created by installer)" -ForegroundColor DarkGray
+        Write-Detail "  ($amdRoot does not exist yet - will be created by installer)" -Color DarkGray
     }
 
     # ---- Pre-clean known residual AMD subdirs ----
@@ -3933,28 +3974,28 @@ function Expand-AmdInstaller_ViaLaunch {
 
     if ($toDelete.Count -gt 0) {
         Write-Host ''
-        Write-Host "    Pre-cleanup: $($toDelete.Count) known AMD dir(s) will be DELETED:" -ForegroundColor DarkGray
+        Write-Detail "Pre-cleanup: $($toDelete.Count) known AMD dir(s) will be DELETED:" -Color DarkGray
         foreach ($p in $toDelete) {
-            Write-Host "      [DELETE] $p" -ForegroundColor Yellow
+            Write-Detail "  [DELETE] $p" -Color Yellow
             try {
                 Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop
-                Write-Host "      [  OK  ] deleted" -ForegroundColor DarkGray
+                Write-Detail "  [  OK  ] deleted" -Color DarkGray
             } catch {
                 Write-Warn2 "      [ FAIL ] $($_.Exception.Message)"
             }
         }
     } else {
         Write-Host ''
-        Write-Host "    Pre-cleanup: no known AMD dirs to delete" -ForegroundColor DarkGray
+        Write-Detail "Pre-cleanup: no known AMD dirs to delete" -Color DarkGray
     }
 
     # ---- Show what remains (preserved) ----
     if (Test-Path $amdRoot) {
         $preserved = @(Get-ChildItem $amdRoot -Directory -ErrorAction SilentlyContinue)
         if ($preserved.Count -gt 0) {
-            Write-Host "    Preserved (not in known-clean list):" -ForegroundColor DarkGray
+            Write-Detail "Preserved (not in known-clean list):" -Color DarkGray
             foreach ($p in $preserved) {
-                Write-Host "      [ KEEP ] $($p.FullName)" -ForegroundColor DarkGray
+                Write-Detail "  [ KEEP ] $($p.FullName)" -Color DarkGray
             }
         }
     }
@@ -3966,7 +4007,7 @@ function Expand-AmdInstaller_ViaLaunch {
     $launchStart = (Get-Date).AddSeconds(-2)
 
     Write-Host ''
-    Write-Host "    Launching installer (silent /S) at $($launchStart.AddSeconds(2).ToString('HH:mm:ss'))" -ForegroundColor DarkGray
+    Write-Detail "Launching installer (silent /S) at $($launchStart.AddSeconds(2).ToString('HH:mm:ss'))" -Color DarkGray
 
     # /S = silent. The AMD installer extracts to C:\AMD\... and then
     # tries to install. We kill before the install step modifies state.
@@ -3976,7 +4017,7 @@ function Expand-AmdInstaller_ViaLaunch {
     if (-not $proc) { throw 'Could not launch AMD installer for self-extraction.' }
 
     $maxWaitSec = 180
-    Write-Host "    Watching $amdRoot for fresh extraction directory (timeout ${maxWaitSec}s)..." -ForegroundColor DarkGray
+    Write-Detail "Watching $amdRoot for fresh extraction directory (timeout ${maxWaitSec}s)..." -Color DarkGray
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $newDir = $null
     $lastInfCount = 0
@@ -4011,7 +4052,7 @@ function Expand-AmdInstaller_ViaLaunch {
             $stableTicks++
         } else {
             $stableTicks = 0
-            Write-Host "      growing: $($best.Name) -> $bestInfCount INFs" -ForegroundColor DarkGray
+            Write-Detail "  growing: $($best.Name) -> $bestInfCount INFs" -Color DarkGray
         }
         $lastInfCount = $bestInfCount
 
@@ -4027,19 +4068,19 @@ function Expand-AmdInstaller_ViaLaunch {
         if (Test-Path $amdRoot) {
             $dirs = @(Get-ChildItem $amdRoot -Directory -ErrorAction SilentlyContinue)
             if ($dirs.Count -eq 0) {
-                Write-Host "      (no directories under $amdRoot)" -ForegroundColor DarkGray
+                Write-Detail "  (no directories under $amdRoot)" -Color DarkGray
             } else {
                 foreach ($d in $dirs) {
                     $isFresh = ($d.LastWriteTime -gt $launchStart)
                     $infCount = @(Get-ChildItem $d.FullName -Recurse -Filter *.inf -File -ErrorAction SilentlyContinue).Count
                     $marker = if ($isFresh) { '[FRESH]' } else { '[old  ]' }
-                    Write-Host ("      $marker {0,-30} mtime={1:HH:mm:ss}  INFs={2}" -f $d.Name, $d.LastWriteTime, $infCount) -ForegroundColor DarkGray
+                    Write-Detail ("  $marker {0,-30} mtime={1:HH:mm:ss}  INFs={2}" -f $d.Name, $d.LastWriteTime, $infCount) -Color DarkGray
                 }
             }
         } else {
-            Write-Host "      $amdRoot does not exist (installer never created it)" -ForegroundColor DarkGray
+            Write-Detail "  $amdRoot does not exist (installer never created it)" -Color DarkGray
         }
-        Write-Host "      installer process (PID $($proc.Id)) still running: $(-not $proc.HasExited)" -ForegroundColor DarkGray
+        Write-Detail "  installer process (PID $($proc.Id)) still running: $(-not $proc.HasExited)" -Color DarkGray
     }
 
     # Terminate the installer (and any children) before it installs.
@@ -4056,7 +4097,7 @@ function Expand-AmdInstaller_ViaLaunch {
         throw "AMD installer did not produce a recognizable extraction directory under $amdRoot within ${maxWaitSec}s. See the diagnostic dump above. Look for a [FRESH] entry with INFs > 0; if you see one but the script timed out, the stability check (6s) may not have fired - try increasing maxWaitSec or accepting the first match."
     }
 
-    Write-Host "    Detected extraction at $($newDir.FullName) (waited $([math]::Round($sw.Elapsed.TotalSeconds,1))s, $lastInfCount INFs)" -ForegroundColor DarkGray
+    Write-Detail "Detected extraction at $($newDir.FullName) (waited $([math]::Round($sw.Elapsed.TotalSeconds,1))s, $lastInfCount INFs)" -Color DarkGray
 
     # r52 fix: replace Copy-Item with robocopy.
     # The previous code:
@@ -4108,10 +4149,10 @@ function Expand-AmdInstaller_ViaLaunch {
     # because letting P05+ run on an incomplete extract just propagates
     # the corruption to harder-to-diagnose downstream symptoms.
     $verify = Test-RobocopyResult -SourcePath $newDir.FullName -DestinationPath $DestinationPath
-    Write-Host ("    Post-copy verification: src/dst files = {0}/{1}, src/dst dirs = {2}/{3}, INFs = {4}/{5}" `
+    Write-Detail ("Post-copy verification: src/dst files = {0}/{1}, src/dst dirs = {2}/{3}, INFs = {4}/{5}" `
         -f $verify.SrcFileCount, $verify.DstFileCount,
             $verify.SrcDirCount,  $verify.DstDirCount,
-            $verify.SrcInfCount,  $verify.DstInfCount) -ForegroundColor DarkGray
+            $verify.SrcInfCount,  $verify.DstInfCount) -Color DarkGray
 
     if (-not $verify.Success) {
         Write-Warn2 ("    robocopy reported exit={0} but post-copy verification FAILED:" -f $robocopyExit)
@@ -4120,21 +4161,21 @@ function Expand-AmdInstaller_ViaLaunch {
         if ($verify.MissingFiles.Count -gt 0) {
             Write-Warn2 ("      Missing in destination ({0} file(s); showing first 10):" -f $verify.MissingFiles.Count)
             $verify.MissingFiles | Select-Object -First 10 | ForEach-Object {
-                Write-Host ("        - $_") -ForegroundColor DarkYellow
+                Write-Detail ("    - $_") -Color DarkYellow
             }
         }
         if ($verify.ExtraFiles.Count -gt 0) {
             Write-Warn2 ("      Unexpected in destination ({0} file(s); showing first 10):" -f $verify.ExtraFiles.Count)
             $verify.ExtraFiles | Select-Object -First 10 | ForEach-Object {
-                Write-Host ("        - $_") -ForegroundColor DarkYellow
+                Write-Detail ("    - $_") -Color DarkYellow
             }
         }
         throw ("Post-robocopy verification failed: src={0} files / dst={1} files, missing={2}, extra={3}. The source tree at '{4}' appears intact; the destination at '{5}' is incomplete. Re-run with -CleanWorkRoot, or inspect both trees manually." `
             -f $verify.SrcFileCount, $verify.DstFileCount, $verify.MissingFiles.Count, $verify.ExtraFiles.Count, $newDir.FullName, $DestinationPath)
     }
 
-    Write-Host ("    robocopy result: exit={0}  files copied={1}  INFs copied={2}  [VERIFIED]" `
-        -f $robocopyExit, $verify.DstFileCount, $verify.DstInfCount) -ForegroundColor DarkGray
+    Write-Detail ("robocopy result: exit={0}  files copied={1}  INFs copied={2}  [VERIFIED]" `
+        -f $robocopyExit, $verify.DstFileCount, $verify.DstInfCount) -Color DarkGray
     Write-Ok "    Extracted via installer self-launch from $($newDir.FullName)"
 }
 
@@ -4288,7 +4329,7 @@ function Expand-AmdInstaller_ViaInstallShield {
     # =====================================================================
     # Step 1/3: 7-Zip the outer NSIS wrapper into is-stage-nsis
     # =====================================================================
-    Write-Host "      Step 1/3: 7-Zip outer NSIS shell..." -ForegroundColor DarkGray
+    Write-Detail "  Step 1/3: 7-Zip outer NSIS shell..." -Color DarkGray
     & $SevenZipPath x $InstallerPath "-o$stageNsis" -y -bsp0 -bso0 2>$null | Out-Null
     $sevenZipExit = $LASTEXITCODE
     if ($sevenZipExit -ne 0) {
@@ -4310,7 +4351,7 @@ function Expand-AmdInstaller_ViaInstallShield {
     if (-not $innerExe) {
         throw "Inner InstallShield SFX (AMD_Chipset_Drivers.exe) not found under $stageNsis. Possible cause: AMD changed the outer-shell layout. Inspect $stageNsis manually."
     }
-    Write-Host ("      Inner SFX  : {0} ({1:N1} MB)" -f $innerExe.FullName, ($innerExe.Length/1MB)) -ForegroundColor DarkGray
+    Write-Detail ("  Inner SFX  : {0} ({1:N1} MB)" -f $innerExe.FullName, ($innerExe.Length/1MB)) -Color DarkGray
 
     # =====================================================================
     # Step 2/3: InstallShield /a admin install of the inner SFX
@@ -4329,7 +4370,7 @@ function Expand-AmdInstaller_ViaInstallShield {
     # literal /v"..." structure reaches CreateProcess intact. This
     # pattern is verified to work against InstallShield SFX builds
     # 2020-2025.
-    Write-Host "      Step 2/3: InstallShield /a admin install..." -ForegroundColor DarkGray
+    Write-Detail "  Step 2/3: InstallShield /a admin install..." -Color DarkGray
     $innerExePath = $innerExe.FullName
 
     & $innerExePath /a /s "/v`"TARGETDIR=`"$stageMsi`" GONOGO=`"PUBLICGO`" /qn /l*v `"$isLog`"`"" 2>$null | Out-Null
@@ -4343,7 +4384,7 @@ function Expand-AmdInstaller_ViaInstallShield {
     if ($msiFiles.Count -lt 2) {
         throw "InstallShield /a produced only $($msiFiles.Count) MSI(s) under $stageMsi (expected >=2: 1 parent + N sub). InstallShield exit was $installShieldExit. See log: $isLog"
     }
-    Write-Host ("      Unpacked   : {0} MSI files (InstallShield exit {1})" -f $msiFiles.Count, $installShieldExit) -ForegroundColor DarkGray
+    Write-Detail ("  Unpacked   : {0} MSI files (InstallShield exit {1})" -f $msiFiles.Count, $installShieldExit) -Color DarkGray
 
     # =====================================================================
     # Step 3/3: Recursive msiexec /a on each sub-MSI
@@ -4355,7 +4396,7 @@ function Expand-AmdInstaller_ViaInstallShield {
     # INSTALLDIR relative to TARGETDIR via the
     # [TARGETDIR]AMD\Chipset_Software\Binaries\<DriverName>\<OS>    # property chain, so a single TARGETDIR collapses everything
     # into one flat W11x64 / WTx64 / WTx86 tree.
-    Write-Host ("      Step 3/3: msiexec /a on {0} sub-MSI(s)..." -f $msiFiles.Count) -ForegroundColor DarkGray
+    Write-Detail ("  Step 3/3: msiexec /a on {0} sub-MSI(s)..." -f $msiFiles.Count) -Color DarkGray
 
     # Always start from a clean DestinationPath
     if (Test-Path $DestinationPath) {
@@ -4384,10 +4425,10 @@ function Expand-AmdInstaller_ViaInstallShield {
             $subSuccess++
         } else {
             $subFail++
-            Write-Host ("        sub-MSI exit {0}: {1} (log: {2})" -f $sub.ExitCode, $msi.Name, $subLog) -ForegroundColor DarkGray
+            Write-Detail ("    sub-MSI exit {0}: {1} (log: {2})" -f $sub.ExitCode, $msi.Name, $subLog) -Color DarkGray
         }
     }
-    Write-Host ("      msiexec /a : {0} succeeded, {1} failed" -f $subSuccess, $subFail) -ForegroundColor DarkGray
+    Write-Detail ("  msiexec /a : {0} succeeded, {1} failed" -f $subSuccess, $subFail) -Color DarkGray
 
     if ($subSuccess -eq 0) {
         throw "All $($msiFiles.Count) sub-MSI admin installs failed. Inspect logs in $logRoot\msiexec-admin-*.log"
@@ -4923,8 +4964,8 @@ function Invoke-PrepPhase00_Initialize {
         # display only showed the mapped profile name, which made it look
         # like the script had mis-detected the OS.
         Write-Ok "OS detected: $($Ctx.Os.Caption) (build $($Ctx.Os.ActualBuild))"
-        Write-Host "    Profile applied : $($Ctx.Os.Code) ($($Ctx.Os.Name))" -ForegroundColor DarkGray
-        Write-Host "    ProductType     : $($Ctx.Os.ProductType)  (1=Workstation, 3=Server)"
+        Write-Detail "Profile applied : $($Ctx.Os.Code) ($($Ctx.Os.Name))" -Color DarkGray
+        Write-Detail "ProductType     : $($Ctx.Os.ProductType)  (1=Workstation, 3=Server)"
         Write-Host ''
         if ($isBuild26100) {
             # IDEAL preview scenario: Win11 24H2 (26100) shares the WS2025 kernel.
@@ -4959,10 +5000,10 @@ function Invoke-PrepPhase00_Initialize {
         Write-Host '      1. Use -Action PrepareVerify -CleanWorkRoot only (no system' -ForegroundColor White
         Write-Host '         changes; safe to run repeatedly).' -ForegroundColor White
         Write-Host '      2. Save the run log for post-WS2025-install comparison:' -ForegroundColor White
-        Write-Host ("         .\{0} -Action PrepareVerify -CleanWorkRoot *>&1 |" -f $scriptLeaf) -ForegroundColor DarkGray
-        Write-Host ("           Tee-Object -FilePath C:\Temp\amd-{0}-Win11-preview.log" -f $logTag) -ForegroundColor DarkGray
+        Write-Detail ("     .\{0} -Action PrepareVerify -CleanWorkRoot *>&1 |" -f $scriptLeaf) -Color DarkGray
+        Write-Detail ("       Tee-Object -FilePath C:\Temp\amd-{0}-Win11-preview.log" -f $logTag) -Color DarkGray
         Write-Host '      3. After WS2025 clean install, re-run with the same command' -ForegroundColor White
-        Write-Host ("           (... | Tee-Object -FilePath C:\Temp\amd-{0}-WS2025.log)" -f $logTag) -ForegroundColor DarkGray
+        Write-Detail ("       (... | Tee-Object -FilePath C:\Temp\amd-{0}-WS2025.log)" -f $logTag) -Color DarkGray
         Write-Host '         and compare the two logs (especially V06 section 2/3).' -ForegroundColor White
         Write-Host '      4. -Action Install / I01-I04 phases are REJECTED on Workstation' -ForegroundColor White
         Write-Host '         (would import certs, deploy WDAC policy, displace OEM drivers).' -ForegroundColor White
@@ -4998,7 +5039,7 @@ If you really need to install on this Workstation host, pass
         }
     } else {
         Write-Ok "OS detected: $($Ctx.Os.Name) (build $($Ctx.Os.ActualBuild)) [$($Ctx.Os.Code)]"
-        Write-Host "    ProductType: $($Ctx.Os.ProductType)  (1=Workstation, 3=Server)"
+        Write-Detail "ProductType: $($Ctx.Os.ProductType)  (1=Workstation, 3=Server)"
     }
 
     # ---- UEFI Secure Boot certificate baseline (r49) ----
@@ -5070,9 +5111,9 @@ function Invoke-PrepPhase02_AcquireTools {
         $Ctx.Inf2cat  = Find-KitTool 'inf2cat.exe'
         if ($Ctx.SevenZip -and $Ctx.Signtool -and $Ctx.Inf2cat) {
             Write-Skip 'Tools already present (cached marker).'
-            Write-Host "    7-Zip   : $($Ctx.SevenZip)"
-            Write-Host "    signtool: $($Ctx.Signtool)"
-            Write-Host "    inf2cat : $($Ctx.Inf2cat)"
+            Write-Detail "7-Zip   : $($Ctx.SevenZip)"
+            Write-Detail "signtool: $($Ctx.Signtool)"
+            Write-Detail "inf2cat : $($Ctx.Inf2cat)"
             Write-PhaseFooter 'P02' 'cached'
             return
         }
@@ -5084,8 +5125,8 @@ function Invoke-PrepPhase02_AcquireTools {
     # for transparency, then route winget to --source winget so the
     # msstore disclaimer prompts are skipped entirely.
     $region = Get-MachineRegion
-    Write-Host "    Region       : $region (auto-detected from system locale / home location)"
-    Write-Host "    winget source: 'winget' only (msstore is bypassed for these packages)"
+    Write-Detail "Region       : $region (auto-detected from system locale / home location)"
+    Write-Detail "winget source: 'winget' only (msstore is bypassed for these packages)"
 
     # 7-Zip
     if (-not (Get-SevenZipPath)) {
@@ -5107,10 +5148,10 @@ function Invoke-PrepPhase02_AcquireTools {
     # Signing tools
     $signtool = Find-KitTool 'signtool.exe'
     $inf2cat  = Find-KitTool 'inf2cat.exe'
-    Write-Host "    Profile      : $($Ctx.Os.Code)"
-    Write-Host "    SDK build    : $($Ctx.Os.SdkBuild)"
-    Write-Host "    WDK build    : $($Ctx.Os.WdkBuild)"
-    Write-Host "    Notes        : $($Ctx.Os.ToolkitNotes)"
+    Write-Detail "Profile      : $($Ctx.Os.Code)"
+    Write-Detail "SDK build    : $($Ctx.Os.SdkBuild)"
+    Write-Detail "WDK build    : $($Ctx.Os.WdkBuild)"
+    Write-Detail "Notes        : $($Ctx.Os.ToolkitNotes)"
 
     # r51: On a clean-installed host the SDK and WDK packages are
     # absent and must be downloaded via winget. The bootstrap EXEs
@@ -5204,12 +5245,12 @@ function Invoke-PrepPhase03_FetchInstaller {
         if ($platform) {
             Write-Host ''
             Write-Host '    Detected AMD platform (informational):' -ForegroundColor DarkGray
-            Write-Host "        CPU        : $($platform.CpuName)"
-            Write-Host "        Socket     : $($platform.Socket)"
+            Write-Detail "    CPU        : $($platform.CpuName)"
+            Write-Detail "    Socket     : $($platform.Socket)"
             if ($platform.Generation) {
-                Write-Host "        Generation : $($platform.Generation)"
+                Write-Detail "    Generation : $($platform.Generation)"
             }
-            Write-Host "        Confidence : $($platform.Confidence)"
+            Write-Detail "    Confidence : $($platform.Confidence)"
             if ($platform.Reason)     { Write-Host "        Reason     : $($platform.Reason)" -ForegroundColor DarkGray }
             Write-Host ''
         }
@@ -5217,10 +5258,10 @@ function Invoke-PrepPhase03_FetchInstaller {
         Write-Step "Resolving latest AMD Chipset Driver URL ($($Ctx.AmdLandingUrls.Count) page(s))"
         $info = Get-LatestAmdChipsetUrl -LandingUrls $Ctx.AmdLandingUrls -FallbackUrl $Ctx.AmdFallbackUrl
         Write-Host ''
-        Write-Host "    Version    : $($info.Version)"
-        Write-Host "    Source     : $($info.Source)"
-        Write-Host "    Source page: $(if ($info.SourcePage) { $info.SourcePage } else { 'n/a' })"
-        Write-Host "    URL        : $($info.Url)"
+        Write-Detail "Version    : $($info.Version)"
+        Write-Detail "Source     : $($info.Source)"
+        Write-Detail "Source page: $(if ($info.SourcePage) { $info.SourcePage } else { 'n/a' })"
+        Write-Detail "URL        : $($info.Url)"
         $url = $info.Url
         $sourcePage = $info.SourcePage
     }
@@ -5262,9 +5303,9 @@ function Invoke-PrepPhase03_FetchInstaller {
     }
 
     Write-Step "Downloading: $url"
-    Write-Host "    User-Agent : (browser)" -ForegroundColor DarkGray
+    Write-Detail "User-Agent : (browser)" -Color DarkGray
     if ($headers.ContainsKey('Referer')) {
-        Write-Host "    Referer    : $($headers['Referer'])" -ForegroundColor DarkGray
+        Write-Detail "Referer    : $($headers['Referer'])" -Color DarkGray
     }
 
     try {
@@ -5326,7 +5367,7 @@ function Invoke-PrepPhase04_ExtractInstaller {
     # confusingly. Bail out with an actionable message.
     $sizeBytes = (Get-Item $Ctx.Installer).Length
     $sizeMB = [math]::Round($sizeBytes / 1MB, 1)
-    Write-Host "    Installer    : $($Ctx.Installer) ($sizeMB MB)"
+    Write-Detail "Installer    : $($Ctx.Installer) ($sizeMB MB)"
     if ($sizeBytes -lt 5MB) {
         throw "Installer at $($Ctx.Installer) is only $sizeMB MB (expected >50 MB). The download may be corrupt or have served an error page. Re-run with -CleanWorkRoot to retry, or pass -InstallerUrl with a known-good URL."
     }
@@ -5374,7 +5415,7 @@ function Invoke-PrepPhase04_ExtractInstaller {
         $dest = Join-Path $n.DirectoryName ($n.BaseName + '__contents')
         if (Test-Path $dest) { continue }
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
-        Write-Host "    Nested: $($n.Name)" -ForegroundColor DarkCyan
+        Write-Detail "Nested: $($n.Name)" -Color DarkCyan
 
         & $Ctx.SevenZip x $n.FullName "-o$dest" -y -bsp0 -bso0 2>&1 | Out-Null
         $sevenZipExit = $LASTEXITCODE
@@ -5391,7 +5432,7 @@ function Invoke-PrepPhase04_ExtractInstaller {
         if ($extractedCount -eq 0) {
             Write-Warn2 ("      7-Zip exit={0} but 0 files extracted from {1} - flagged for downstream INF-count check" -f $sevenZipExit, $n.Name)
         } else {
-            Write-Host ("      -> exit={0}, {1} file(s) extracted" -f $sevenZipExit, $extractedCount) -ForegroundColor DarkGray
+            Write-Detail ("  -> exit={0}, {1} file(s) extracted" -f $sevenZipExit, $extractedCount) -Color DarkGray
         }
     }
 
@@ -5486,11 +5527,11 @@ function Write-InfInventorySummary {
         $itemColor = if ($isSelected) { 'Gray' } else { 'DarkGray' }
 
         Write-Host ''
-        Write-Host ("    +" + ("-" * 110)) -ForegroundColor $hdrColor
+        Write-Detail ("+" + ("-" * 110)) -Color $hdrColor
         $marker = if ($isSelected) { '[SELECTED]' } else { '[ skip   ]' }
-        Write-Host ("    | $marker Variant: {0}    {1} INF(s)    Patch in-scope: {2}" -f `
-            $g.Name, $g.Count, $isSelected) -ForegroundColor $hdrColor
-        Write-Host ("    +" + ("-" * 110)) -ForegroundColor $hdrColor
+        Write-Detail ("| $marker Variant: {0}    {1} INF(s)    Patch in-scope: {2}" -f `
+            $g.Name, $g.Count, $isSelected) -Color $hdrColor
+        Write-Detail ("+" + ("-" * 110)) -Color $hdrColor
 
         # Sort INFs in this variant by relative directory then INF name
         $sorted = $g.Group | Sort-Object RelativeDir, Inf
@@ -5509,31 +5550,31 @@ function Write-InfInventorySummary {
             $relDirShown = if ([string]::IsNullOrEmpty($i.RelativeDir)) { '.' } else { $i.RelativeDir }
             if ($relDirShown.Length -gt 60) { $relDirShown = '...' + $relDirShown.Substring($relDirShown.Length - 57) }
 
-            Write-Host ("    {0,-32}  class={1,-12}  driverver={2}" -f `
-                $infNameTrim, ($i.Class), ($i.DriverVer)) -ForegroundColor $itemColor
-            Write-Host ("        dir   : {0}" -f $relDirShown) -ForegroundColor DarkGray
+            Write-Detail ("{0,-32}  class={1,-12}  driverver={2}" -f `
+                $infNameTrim, ($i.Class), ($i.DriverVer)) -Color $itemColor
+            Write-Detail ("    dir   : {0}" -f $relDirShown) -Color DarkGray
 
             $providerShown = if ($i.Provider) { $i.Provider } else { '(unknown)' }
             $mfgShown      = if ($i.Manufacturer) { $i.Manufacturer } else { '(unknown)' }
-            Write-Host ("        prov  : {0}    mfg: {1}" -f $providerShown, $mfgShown) -ForegroundColor DarkGray
+            Write-Detail ("    prov  : {0}    mfg: {1}" -f $providerShown, $mfgShown) -Color DarkGray
 
             if ($primaryDev) {
                 $extraSuffix = if ($extraCount -gt 0) { "  (+$extraCount more device variants)" } else { '' }
                 $descShown = $primaryDev.Description
                 if ($descShown -and $descShown.Length -gt 78) { $descShown = $descShown.Substring(0,75) + '...' }
-                Write-Host ("        device: {0}{1}" -f $descShown, $extraSuffix) -ForegroundColor DarkGray
+                Write-Detail ("    device: {0}{1}" -f $descShown, $extraSuffix) -Color DarkGray
                 $hwidShown = $primaryDev.HardwareId
                 if ($hwidShown -and $hwidShown.Length -gt 78) { $hwidShown = $hwidShown.Substring(0,75) + '...' }
-                Write-Host ("        hwid  : {0}" -f $hwidShown) -ForegroundColor DarkGray
+                Write-Detail ("    hwid  : {0}" -f $hwidShown) -Color DarkGray
             } else {
                 # r42: distinguish "INF has no [Models]" from "[Models] scanned but parser couldn't extract devices"
                 $scanned = if ($i.PSObject.Properties.Name -contains 'ModelsSectionsScanned') { [int]$i.ModelsSectionsScanned } else { 0 }
                 $mfgEnt  = if ($i.PSObject.Properties.Name -contains 'ManufacturerEntries')   { [int]$i.ManufacturerEntries   } else { 0 }
                 if ($scanned -gt 0) {
-                    Write-Host ("        device: (no device entries parsed; {0} [Models] section(s) scanned, {1} mfg entry(ies))" -f $scanned, $mfgEnt) -ForegroundColor Yellow
-                    Write-Host ("                 ^ INF format may use a non-standard LHS in [Models] (parser regressed?). V05/V06 may not match this INF's HWIDs.") -ForegroundColor Yellow
+                    Write-Detail ("    device: (no device entries parsed; {0} [Models] section(s) scanned, {1} mfg entry(ies))" -f $scanned, $mfgEnt) -Color Yellow
+                    Write-Detail ("             ^ INF format may use a non-standard LHS in [Models] (parser regressed?). V05/V06 may not match this INF's HWIDs.") -Color Yellow
                 } else {
-                    Write-Host ("        device: (no device entries parsed)") -ForegroundColor DarkGray
+                    Write-Detail ("    device: (no device entries parsed)") -Color DarkGray
                 }
             }
         }
@@ -5653,11 +5694,11 @@ function Invoke-PrepPhase05_AnalyzeInfs {
     # look like the script had mis-detected the host (e.g. "Host OS: Windows
     # Server 2025" while running on Win11 24H2).
     if ($Ctx.Os.ProductType -eq 1 -and $Ctx.Os.Caption) {
-        Write-Host "    Host OS         : $($Ctx.Os.Caption)  [profile: $($Ctx.Os.Name)]" -ForegroundColor DarkGray
+        Write-Detail "Host OS         : $($Ctx.Os.Caption)  [profile: $($Ctx.Os.Name)]" -Color DarkGray
     } else {
-        Write-Host "    Host OS         : $($Ctx.Os.Name)" -ForegroundColor DarkGray
+        Write-Detail "Host OS         : $($Ctx.Os.Name)" -Color DarkGray
     }
-    Write-Host "    Preferred AMD source variant(s): $($preferredVariants -join ', ')" -ForegroundColor DarkGray
+    Write-Detail "Preferred AMD source variant(s): $($preferredVariants -join ', ')" -Color DarkGray
 
     # Use the same parser V04 uses to check for server decorations.
     # The previous regex 'NTamd64\.10\.0\.3\.' was too strict (required
@@ -5737,11 +5778,11 @@ function Invoke-PrepPhase05_AnalyzeInfs {
     # Variant breakdown summary
     $byVariant = $report | Group-Object SourceVariant | Sort-Object Name
     Write-Host ''
-    Write-Host "    INF inventory by source variant:" -ForegroundColor DarkGray
+    Write-Detail "INF inventory by source variant:" -Color DarkGray
     foreach ($g in $byVariant) {
         $selectedFlag = if ($preferredVariants -contains $g.Name) { '[SELECTED]' } else { '[ skip   ]' }
         $color = if ($preferredVariants -contains $g.Name) { 'Green' } else { 'DarkGray' }
-        Write-Host ("      $selectedFlag {0,-10} {1,3} INF(s)" -f $g.Name, $g.Count) -ForegroundColor $color
+        Write-Detail ("  $selectedFlag {0,-10} {1,3} INF(s)" -f $g.Name, $g.Count) -Color $color
     }
     Write-Host ''
 
@@ -5838,7 +5879,7 @@ function Invoke-PrepPhase06_PatchInfs {
     $skippedByVariant = $skippedAll | Group-Object SourceVariant | Sort-Object Name
     if ($skippedByVariant) {
         $skipSummary = ($skippedByVariant | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', '
-        Write-Host "    Skipping $($skippedAll.Count) INF(s) not in scope for host OS: $skipSummary" -ForegroundColor DarkGray
+        Write-Detail "Skipping $($skippedAll.Count) INF(s) not in scope for host OS: $skipSummary" -Color DarkGray
     }
     Write-Step "Patching $($needsPatch.Count) INF file(s)..."
 
@@ -5969,9 +6010,9 @@ function Invoke-PrepPhase07_CreateCertificate {
     }
     $cert = New-SelfSignedCertificate @params
     Write-Ok "Created cert $($cert.Thumbprint)"
-    Write-Host "    Subject: $subject"
-    Write-Host "    Key    : RSA $($Ctx.Os.CertKeyLength) / $($Ctx.Os.CertHashAlgorithm)"
-    Write-Host "    Valid  : $($Ctx.Os.CertValidYears) years"
+    Write-Detail "Subject: $subject"
+    Write-Detail "Key    : RSA $($Ctx.Os.CertKeyLength) / $($Ctx.Os.CertHashAlgorithm)"
+    Write-Detail "Valid  : $($Ctx.Os.CertValidYears) years"
     Write-Host ''
     Write-Host '    *** SELF-SIGNED CERTIFICATE - PERSONAL VERIFICATION USE ONLY ***' -ForegroundColor Yellow
     Write-Host '    This is NOT issued by a CA or by AMD/Microsoft. It is generated' -ForegroundColor DarkYellow
@@ -6094,13 +6135,13 @@ function Invoke-PrepPhase08_GenerateCatalogs {
 
         Write-Host ''
         Write-Warn2 "P08: no INF-bearing directories found under the patched root."
-        Write-Host  "    Patched root         : $($Ctx.Paths.Patched)" -ForegroundColor DarkGray
-        Write-Host  "    Subdirectories found : $($allDirs.Count)" -ForegroundColor DarkGray
-        Write-Host  "    .inf files found     : $($allInfs.Count)" -ForegroundColor DarkGray
+        Write-Detail  "Patched root         : $($Ctx.Paths.Patched)" -Color DarkGray
+        Write-Detail  "Subdirectories found : $($allDirs.Count)" -Color DarkGray
+        Write-Detail  ".inf files found     : $($allInfs.Count)" -Color DarkGray
         if ($allInfs.Count -gt 0) {
             Write-Host '    First few .inf paths:' -ForegroundColor DarkGray
             $allInfs | Select-Object -First 5 | ForEach-Object {
-                Write-Host "      $($_.FullName)" -ForegroundColor DarkGray
+                Write-Detail "  $($_.FullName)" -Color DarkGray
             }
         } else {
             Write-Host '    (no .inf files exist anywhere under patched root)' -ForegroundColor DarkGray
@@ -6147,8 +6188,8 @@ function Invoke-PrepPhase08_GenerateCatalogs {
     }
 
     Write-Host ''
-    Write-Host "    === inf2cat /os switch selection ===" -ForegroundColor Cyan
-    Write-Host "    Host OS              : $($Ctx.Os.Name) (build $($Ctx.Os.Build))" -ForegroundColor Gray
+    Write-Detail "=== inf2cat /os switch selection ===" -Color Cyan
+    Write-Detail "Host OS              : $($Ctx.Os.Name) (build $($Ctx.Os.Build))" -Color Gray
 
     # ---- inf2cat tool identification ----
     # Show the path and embedded version metadata of the inf2cat
@@ -6157,22 +6198,22 @@ function Invoke-PrepPhase08_GenerateCatalogs {
     # /os values list depends on this).
     $inf2catVer = Get-Inf2catVersion -Inf2catPath $Ctx.Inf2cat
     if ($inf2catVer) {
-        Write-Host "    inf2cat tool         : $($inf2catVer.FullPath)" -ForegroundColor Gray
-        Write-Host "    inf2cat description  : $($inf2catVer.FileDescription)" -ForegroundColor DarkGray
-        Write-Host "    inf2cat file version : $($inf2catVer.FileVersion)" -ForegroundColor DarkGray
+        Write-Detail "inf2cat tool         : $($inf2catVer.FullPath)" -Color Gray
+        Write-Detail "inf2cat description  : $($inf2catVer.FileDescription)" -Color DarkGray
+        Write-Detail "inf2cat file version : $($inf2catVer.FileVersion)" -Color DarkGray
         if ($inf2catVer.ProductVersion -and ($inf2catVer.ProductVersion -ne $inf2catVer.FileVersion)) {
-            Write-Host "    inf2cat product ver  : $($inf2catVer.ProductVersion)" -ForegroundColor DarkGray
+            Write-Detail "inf2cat product ver  : $($inf2catVer.ProductVersion)" -Color DarkGray
         }
     } else {
         Write-Warn2 "    inf2cat tool path    : $($Ctx.Inf2cat) (version metadata unavailable)"
     }
 
-    Write-Host "    Preferred /os switch : $hostPreferred" -ForegroundColor Gray
+    Write-Detail "Preferred /os switch : $hostPreferred" -Color Gray
     if ($hostFallbacks.Count -gt 0) {
-        Write-Host "    Configured fallbacks : $($hostFallbacks -join ', ')" -ForegroundColor Gray
+        Write-Detail "Configured fallbacks : $($hostFallbacks -join ', ')" -Color Gray
     }
 
-    Write-Host "    Probing inf2cat /? for supported /os values..." -ForegroundColor DarkGray
+    Write-Detail "Probing inf2cat /? for supported /os values..." -Color DarkGray
     $supportedByTool = @(Get-Inf2catSupportedOsValues -Inf2catPath $Ctx.Inf2cat)
     if ($supportedByTool.Count -eq 0) {
         Write-Warn2 "    Could not parse inf2cat help output - will try preferred value blindly."
@@ -6203,7 +6244,7 @@ function Invoke-PrepPhase08_GenerateCatalogs {
 
     # ---- Display the full list of supported /os values ----
     if ($supportedByTool.Count -gt 0) {
-        Write-Host "    inf2cat reports $($supportedByTool.Count) supported /os value(s):" -ForegroundColor DarkGray
+        Write-Detail "inf2cat reports $($supportedByTool.Count) supported /os value(s):" -Color DarkGray
 
         # Categorize values for readability:
         #   Server X64    - Windows Server x64 builds (our primary interest)
@@ -6258,13 +6299,13 @@ function Invoke-PrepPhase08_GenerateCatalogs {
     }
 
     Write-Host ''
-    Write-Host "    -> Selected /os : " -NoNewline -ForegroundColor Cyan
+    Write-Detail "-> Selected /os : " -Color Cyan -NoNewline
     Write-Host $chosenOs -ForegroundColor Green
-    Write-Host "       Reason       : $chosenReason" -ForegroundColor DarkGray
+    Write-Detail "   Reason       : $chosenReason" -Color DarkGray
     Write-Host ''
-    Write-Host "    All inf2cat invocations in P08 will use ONLY: /os:$chosenOs" -ForegroundColor DarkGray
-    Write-Host "    No per-INF switch alternation. The /os switch selects the" -ForegroundColor DarkGray
-    Write-Host "    catalog's target OS (= host), not the INF's source folder." -ForegroundColor DarkGray
+    Write-Detail "All inf2cat invocations in P08 will use ONLY: /os:$chosenOs" -Color DarkGray
+    Write-Detail "No per-INF switch alternation. The /os switch selects the" -Color DarkGray
+    Write-Detail "catalog's target OS (= host), not the INF's source folder." -Color DarkGray
     Write-Host ''
 
     Write-Step "Generating catalogs for $($infDirs.Count) INF folder(s) using /os:$chosenOs"
@@ -6358,14 +6399,14 @@ function Invoke-PrepPhase08_GenerateCatalogs {
 
         if ($succeeded) {
             $okCount++
-            Write-Host "    inf2cat: [$variant] $rel" -ForegroundColor DarkGray
+            Write-Detail "inf2cat: [$variant] $rel" -Color DarkGray
             Write-Ok "  ok (exit=$exit)"
         } else {
             $failCount++
             $exitDisplay = if ($null -eq $exit) { 'launch-failed' } else { $exit }
-            Write-Host "    inf2cat: [$variant] $rel" -ForegroundColor DarkGray
+            Write-Detail "inf2cat: [$variant] $rel" -Color DarkGray
             Write-Warn2 "  FAILED (exit=$exitDisplay)"
-            Write-Host "      log : $logFile" -ForegroundColor DarkGray
+            Write-Detail "  log : $logFile" -Color DarkGray
 
             # Capture failure details for end-of-phase summary.
             # Strategy:
@@ -6410,9 +6451,9 @@ function Invoke-PrepPhase08_GenerateCatalogs {
         foreach ($s in $failureSamples) {
             $idx++
             Write-Host "  [Sample $idx of $($failureSamples.Count)] [$($s.Dir)] exit=$($s.Exit)" -ForegroundColor Yellow
-            Write-Host "    log file: $($s.LogFile)" -ForegroundColor DarkGray
+            Write-Detail "log file: $($s.LogFile)" -Color DarkGray
             foreach ($l in $s.Lines) {
-                Write-Host "    | $l" -ForegroundColor DarkYellow
+                Write-Detail "| $l" -Color DarkYellow
             }
             Write-Host ''
         }
@@ -6466,10 +6507,10 @@ function Invoke-PrepPhase09_SignCatalogs {
         throw 'P09: no .cat files found - run P08 (GenerateCatalogs) first.'
     }
     Write-Step "Signing $($cats.Count) catalog(s) with cert and timestamp ($($Ctx.TimestampUrl))"
-    Write-Host "    Method        : ProcessStartInfo + manual quoting (v2: spaces-in-path safe)" -ForegroundColor DarkCyan
-    Write-Host "    Signtool      : $($Ctx.Signtool)" -ForegroundColor DarkGray
-    Write-Host "    Cert PFX      : $($Ctx.CertPfxPath)" -ForegroundColor DarkGray
-    Write-Host "    Timestamp URL : $($Ctx.TimestampUrl)" -ForegroundColor DarkGray
+    Write-Detail "Method        : ProcessStartInfo + manual quoting (v2: spaces-in-path safe)" -Color DarkCyan
+    Write-Detail "Signtool      : $($Ctx.Signtool)" -Color DarkGray
+    Write-Detail "Cert PFX      : $($Ctx.CertPfxPath)" -Color DarkGray
+    Write-Detail "Timestamp URL : $($Ctx.TimestampUrl)" -Color DarkGray
 
     # Cleanup legacy '.err' files left over from previous runs that used
     # Start-Process -RedirectStandardError. The current ProcessStartInfo
@@ -6477,7 +6518,7 @@ function Invoke-PrepPhase09_SignCatalogs {
     # remaining .err files are stale and could confuse diagnostics.
     $legacyErrFiles = Get-ChildItem -LiteralPath $Ctx.Paths.Logs -Filter '*.err' -ErrorAction SilentlyContinue
     if ($legacyErrFiles -and $legacyErrFiles.Count -gt 0) {
-        Write-Host "    Cleaning $($legacyErrFiles.Count) legacy .err file(s) from prior runs" -ForegroundColor DarkGray
+        Write-Detail "Cleaning $($legacyErrFiles.Count) legacy .err file(s) from prior runs" -Color DarkGray
         foreach ($lf in $legacyErrFiles) {
             Remove-Item -LiteralPath $lf.FullName -Force -ErrorAction SilentlyContinue
         }
@@ -6497,7 +6538,7 @@ function Invoke-PrepPhase09_SignCatalogs {
         Write-Warn2 "    Pre-flight: $emptyCount of $($cats.Count) .cat file(s) are EMPTY (size=0 bytes)"
         Write-Warn2 "    These will fail signing and indicate inf2cat silently produced corrupt output."
     } else {
-        Write-Host "    Pre-flight: all $($cats.Count) .cat files have content (>0 bytes)" -ForegroundColor DarkGray
+        Write-Detail "Pre-flight: all $($cats.Count) .cat files have content (>0 bytes)" -Color DarkGray
     }
     Write-Host ''
 
@@ -6566,12 +6607,12 @@ function Invoke-PrepPhase09_SignCatalogs {
             if ($failCount -eq 1) {
                 Write-Host ''
                 Write-Host '    ========== FIRST FAILURE - FULL LOG DUMP ==========' -ForegroundColor Yellow
-                Write-Host "    Catalog file path: $($cat.FullName)" -ForegroundColor DarkYellow
-                Write-Host "    (This dump is shown only for the first failure to keep output readable)" -ForegroundColor DarkGray
+                Write-Detail "Catalog file path: $($cat.FullName)" -Color DarkYellow
+                Write-Detail "(This dump is shown only for the first failure to keep output readable)" -Color DarkGray
                 Write-Host '    -----------------------------------------------------' -ForegroundColor DarkGray
                 $dumpLines = $logBody.ToString() -split "`r?`n"
                 foreach ($dl in $dumpLines) {
-                    Write-Host "    | $dl" -ForegroundColor DarkYellow
+                    Write-Detail "| $dl" -Color DarkYellow
                 }
                 Write-Host '    -----------------------------------------------------' -ForegroundColor DarkGray
                 Write-Host ''
@@ -6599,9 +6640,9 @@ function Invoke-PrepPhase09_SignCatalogs {
         foreach ($s in $failureSamples) {
             $idx++
             Write-Host "  [Sample $idx of $($failureSamples.Count)] [$($s.Cat)] exit=$($s.Exit)" -ForegroundColor Yellow
-            Write-Host "    log file: $($s.LogFile)" -ForegroundColor DarkGray
+            Write-Detail "log file: $($s.LogFile)" -Color DarkGray
             foreach ($l in $s.Lines) {
-                Write-Host "    | $l" -ForegroundColor DarkYellow
+                Write-Detail "| $l" -Color DarkYellow
             }
             Write-Host ''
         }
@@ -6764,9 +6805,9 @@ function Invoke-VerifyPhase03_VerifyCatalogs {
         $certTrusted = $certInRoot -and $certInTrustedPublisher
     }
 
-    Write-Host "    Cert thumbprint   : $($Ctx.CertThumbprint)" -ForegroundColor DarkGray
-    Write-Host ("    In TrustedRoot    : {0}" -f $certInRoot) -ForegroundColor $(if ($certInRoot) { 'DarkGray' } else { 'Yellow' })
-    Write-Host ("    In TrustedPublisher: {0}" -f $certInTrustedPublisher) -ForegroundColor $(if ($certInTrustedPublisher) { 'DarkGray' } else { 'Yellow' })
+    Write-Detail "Cert thumbprint   : $($Ctx.CertThumbprint)" -Color DarkGray
+    Write-Detail ("In TrustedRoot    : {0}" -f $certInRoot) -Color $(if ($certInRoot) { 'DarkGray' } else { 'Yellow' })
+    Write-Detail ("In TrustedPublisher: {0}" -f $certInTrustedPublisher) -Color $(if ($certInTrustedPublisher) { 'DarkGray' } else { 'Yellow' })
     if (-not $certTrusted) {
         Write-Host ''
         Write-Warn2 '    NOTE: Certificate is NOT yet in trusted stores.'
@@ -6892,7 +6933,7 @@ function Invoke-VerifyPhase03_VerifyCatalogs {
                 # that, suppress further per-catalog noise. The full
                 # count appears in the verification summary below.
                 if ($failExpected -le 3) {
-                    Write-Host ("    [skip] {0} (expected: cert not yet trusted)" -f $cat.Name) -ForegroundColor DarkGray
+                    Write-Detail ("[skip] {0} (expected: cert not yet trusted)" -f $cat.Name) -Color DarkGray
                 } elseif ($failExpected -eq 4) {
                     Write-Host '    [skip] ... (further "cert not yet trusted" skips suppressed; see summary)' -ForegroundColor DarkGray
                 }
@@ -6906,12 +6947,12 @@ function Invoke-VerifyPhase03_VerifyCatalogs {
                 $firstFailureLogged = $true
                 Write-Host ''
                 Write-Host '    ========== FIRST VERIFY FAILURE - LOG DUMP ==========' -ForegroundColor Yellow
-                Write-Host "    Catalog: $($cat.FullName)" -ForegroundColor DarkYellow
-                Write-Host "    Classified as: $(if ($isExpected) { 'EXPECTED (untrusted root)' } else { 'REAL FAILURE' })" -ForegroundColor DarkYellow
+                Write-Detail "Catalog: $($cat.FullName)" -Color DarkYellow
+                Write-Detail "Classified as: $(if ($isExpected) { 'EXPECTED (untrusted root)' } else { 'REAL FAILURE' })" -Color DarkYellow
                 Write-Host '    -----------------------------------------------------' -ForegroundColor DarkGray
                 $dumpLines = $logBody.ToString() -split "`r?`n"
                 foreach ($dl in $dumpLines) {
-                    Write-Host "    | $dl" -ForegroundColor DarkYellow
+                    Write-Detail "| $dl" -Color DarkYellow
                 }
                 Write-Host '    -----------------------------------------------------' -ForegroundColor DarkGray
                 Write-Host ''
@@ -6921,10 +6962,10 @@ function Invoke-VerifyPhase03_VerifyCatalogs {
 
     # ---- Phase outcome classification ----
     Write-Host ''
-    Write-Host "    Catalog verification summary:" -ForegroundColor Cyan
-    Write-Host ("      ok                : {0}" -f $okCount) -ForegroundColor Green
-    Write-Host ("      expected failures : {0}  (cert not yet trusted)" -f $failExpected) -ForegroundColor DarkGray
-    Write-Host ("      REAL failures     : {0}" -f $failReal) -ForegroundColor $(if ($failReal -gt 0) { 'Red' } else { 'DarkGray' })
+    Write-Detail "Catalog verification summary:" -Color Cyan
+    Write-Detail ("  ok                : {0}" -f $okCount) -Color Green
+    Write-Detail ("  expected failures : {0}  (cert not yet trusted)" -f $failExpected) -Color DarkGray
+    Write-Detail ("  REAL failures     : {0}" -f $failReal) -Color $(if ($failReal -gt 0) { 'Red' } else { 'DarkGray' })
 
     if ($failReal -eq 0 -and $failExpected -gt 0) {
         # All failures are due to cert-not-yet-trusted state.
@@ -7045,8 +7086,8 @@ function Invoke-VerifyPhase04_VerifyInfs {
             if ($failCount -eq 1) {
                 Write-Host ''
                 Write-Host '    ========== FIRST V04 FAILURE - [Manufacturer] DUMP ==========' -ForegroundColor Yellow
-                Write-Host "    INF: $($inf.FullName)" -ForegroundColor DarkYellow
-                Write-Host "    Encoding: $($infData.EncodingName)" -ForegroundColor DarkYellow
+                Write-Detail "INF: $($inf.FullName)" -Color DarkYellow
+                Write-Detail "Encoding: $($infData.EncodingName)" -Color DarkYellow
                 Write-Host '    -----------------------------------------------------' -ForegroundColor DarkGray
                 $mfgLines = $infData.Content -split "(?<=`n)"
                 $inSection = $false
@@ -7054,7 +7095,7 @@ function Invoke-VerifyPhase04_VerifyInfs {
                     $tt = $l.TrimEnd("`r","`n")
                     if ($tt -match '^\[Manufacturer\]') { $inSection = $true }
                     if ($inSection) {
-                        Write-Host "    | $tt" -ForegroundColor DarkYellow
+                        Write-Detail "| $tt" -Color DarkYellow
                         if ($tt -match '^\[' -and $tt -notmatch '^\[Manufacturer\]') { break }
                     }
                 }
@@ -8019,7 +8060,35 @@ function Get-DriverSourceCategory {
 
 function Resolve-PerDeviceDriverDecision {
     # ====================================================================
-    # Decide what should happen to a single device during I03 (r32):
+    # Decide what should happen to a single device during I03.
+    #
+    # ---- r56 BREAKING SPECIFICATION CHANGE: category-priority override ----
+    # The driver-source category now takes precedence over version
+    # comparison when AS-IS and TO-BE are in different categories.
+    # Category priority (highest to lowest):
+    #
+    #   [C] Self-signed (this script's output)   = highest
+    #   [B] Hardware vendor / IHV                = middle
+    #   [A] Microsoft (OS in-box)                = lowest
+    #   [?] Unknown / unsigned                   = treated as lowest
+    #
+    # Because the TO-BE driver produced by this pipeline is ALWAYS [C]
+    # (we just signed the patched INFs with our own certificate), the
+    # rule simplifies to:
+    #
+    #   - AS-IS in [A]/[B]/[?]  ->  TO-BE [C] WINS (install regardless
+    #                                of version comparison)
+    #   - AS-IS in [C]          ->  fall back to version comparison
+    #                                (avoid pointless reinstall of an
+    #                                earlier run's self-signed driver)
+    #
+    # Rationale: Microsoft's generic in-box drivers (machine.inf, pci.inf,
+    # hdaudbus.inf, cpu.inf, display.inf, etc.) carry OS-build versions
+    # (e.g. 10.0.26100.1150) that numerically dominate AMD's semantic
+    # vendor versions (e.g. 1.0.47.1). Pure version comparison therefore
+    # never replaces a Microsoft generic with an AMD vendor driver.
+    # The operator's intent when running this script is to put AMD-
+    # specific drivers on AMD hardware - so category overrides version.
     #
     # Inputs:
     #   $Current     - Get-DeviceCurrentDriver result (or $null if no
@@ -8029,15 +8098,15 @@ function Resolve-PerDeviceDriverDecision {
     #                  device's HWID
     #
     # Decisions:
-    #   INSTALL_UPGRADE - patched INF strictly newer; will UPDATE.
-    #                     This is the typical replace-an-older-AMD-
-    #                     driver scenario.
-    #   INSTALL_NEW     - device has no driver bound; safe to add.
-    #                     Rare but possible (Windows deferred install).
-    #   SKIP_NEWER      - current driver is newer than ALL candidates;
-    #                     keep current (do NOT downgrade).
-    #   SKIP_SAME       - patched INF is the same version as current;
-    #                     no point in re-installing.
+    #   INSTALL_UPGRADE  - patched INF should replace current driver.
+    #                      Triggered by EITHER category-priority override
+    #                      OR strictly-newer version (when both sides
+    #                      are in the same category).
+    #   INSTALL_NEW      - device has no driver bound; safe to add.
+    #   SKIP_NEWER       - current driver is strictly newer (same-
+    #                      category comparison only).
+    #   SKIP_SAME        - patched INF is the same version as current
+    #                      (same-category comparison only).
     #
     # When multiple candidates exist for the same device, picks the
     # NEWEST candidate (highest version) and uses it for the decision.
@@ -8073,6 +8142,20 @@ function Resolve-PerDeviceDriverDecision {
             Comparison=1; CandidatesByNewest=$sorted
         }
     }
+    # r56: Category-priority override (see function header for rationale).
+    # The TO-BE driver this pipeline produces is always [C] Self-signed,
+    # so any AS-IS category OTHER than [C] is automatically superseded.
+    $curCatInfo = Get-DriverSourceCategory -Provider $Current.Provider -Signer $Current.Signer
+    $curCatCode = if ($curCatInfo) { $curCatInfo.Code } else { '?' }
+    if ($curCatCode -ne 'C') {
+        return @{
+            Decision='INSTALL_UPGRADE'; ChosenInf=$newest
+            Reason=('category priority [{0}] -> [C]: this script''s self-signed driver outranks the current [{0}] driver (r56 spec)' -f $curCatCode)
+            Comparison=1; CandidatesByNewest=$sorted
+        }
+    }
+    # AS-IS is [C] (earlier run's output); use version comparison to avoid
+    # pointless reinstall when nothing has changed.
     $rd = if ($Current.DriverDate) { $Current.DriverDate } else { [datetime]::MinValue }
     $cmp = Compare-InfDriverVer -LeftRaw $newest.DriverVer -RightRaw $Current.DriverVersion -RightDate $rd
     if ($cmp -gt 0) {
@@ -8112,9 +8195,16 @@ function Resolve-PerDeviceDriverDecision {
 
 function Resolve-PerInfInstallDecision {
     # ====================================================================
-    # Decide install/skip for a single PATCHED INF (r32). Mirror of
+    # Decide install/skip for a single PATCHED INF. Mirror of
     # Resolve-PerDeviceDriverDecision, but per-INF rather than
     # per-device. Used by I03 to decide whether to call pnputil.
+    #
+    # ---- r56 BREAKING SPECIFICATION CHANGE: category-priority override ----
+    # See Resolve-PerDeviceDriverDecision for the full rationale.
+    # Summary: the TO-BE driver this pipeline produces is always
+    # [C] Self-signed, which now ranks ABOVE both [A] Microsoft
+    # generic and [B] vendor drivers. Version comparison applies
+    # only when the AS-IS driver is also [C].
     #
     # Inputs:
     #   $InfEntry            - patched-INF metadata (from Get-InfMetadata)
@@ -8127,13 +8217,13 @@ function Resolve-PerInfInstallDecision {
     #                     device. Safe to add to driver store - it
     #                     won't displace any current driver and may
     #                     help if hardware appears later.
-    #   INSTALL_UPGRADE - INF is strictly newer than at least one
-    #                     matched device's current driver. Install.
-    #   SKIP_NEWER      - All matched devices have a current driver
-    #                     same/newer than this INF. Skip to avoid
-    #                     downgrade (Windows PnP rank would likely
-    #                     reject the install anyway, but we skip
-    #                     proactively to keep logs clean).
+    #   INSTALL_UPGRADE - At least one matched device benefits from this
+    #                     INF, either by category-priority override
+    #                     (AS-IS is [A]/[B]/[?]) or by strictly-newer
+    #                     version (same-category [C] vs [C] comparison).
+    #   SKIP_NEWER      - All matched devices are already on [C] and
+    #                     have the same/newer self-signed driver
+    #                     version. Skip to avoid pointless reinstall.
     #
     # Returns @{ Decision; Reason; AffectedDeviceCount; DetailReasons }
     # ====================================================================
@@ -8158,14 +8248,26 @@ function Resolve-PerInfInstallDecision {
             $reasons += ('+ {0}: no current driver bound' -f $pair.Device.Name)
             continue
         }
+        # r56: Determine current-driver category. If [A]/[B]/[?], the
+        # category-priority override makes this an UPGRADE regardless
+        # of version comparison.
+        $curCatInfo = Get-DriverSourceCategory -Provider $cur.Provider -Signer $cur.Signer
+        $curCatCode = if ($curCatInfo) { $curCatInfo.Code } else { '?' }
+        if ($curCatCode -ne 'C') {
+            $upgrades++
+            $reasons += ('+ {0}: category [{1}] -> [C] override (r56 spec)' -f $pair.Device.Name, $curCatCode)
+            continue
+        }
+        # AS-IS is [C] (earlier run's output); compare versions to avoid
+        # pointless reinstall.
         $rd = if ($cur.DriverDate) { $cur.DriverDate } else { [datetime]::MinValue }
         $cmp = Compare-InfDriverVer -LeftRaw $InfEntry.DriverVer -RightRaw $cur.DriverVersion -RightDate $rd
         if ($cmp -gt 0) {
             $upgrades++
-            $reasons += ('+ {0}: patched newer than current {1}' -f $pair.Device.Name, $cur.DriverVersion)
+            $reasons += ('+ {0}: patched [C] newer than current [C] {1}' -f $pair.Device.Name, $cur.DriverVersion)
         } else {
             $sign = if ($cmp -eq 0) { '=' } else { '<' }
-            $reasons += ('- {0}: patched {1} current {2}' -f $pair.Device.Name, $sign, $cur.DriverVersion)
+            $reasons += ('- {0}: patched [C] {1} current [C] {2}' -f $pair.Device.Name, $sign, $cur.DriverVersion)
         }
     }
     if ($upgrades -gt 0) {
@@ -8178,7 +8280,7 @@ function Resolve-PerInfInstallDecision {
     }
     return @{
         Decision='SKIP_NEWER'
-        Reason=('all {0} matched device(s) have same/newer driver; skipping to avoid downgrade' -f $InfMatchedDevices.Count)
+        Reason=('all {0} matched device(s) already on [C] with same/newer self-signed driver; skipping reinstall' -f $InfMatchedDevices.Count)
         AffectedDeviceCount=0
         DetailReasons=$reasons
     }
@@ -8899,7 +9001,7 @@ function Invoke-InstPhase01_TrustCertificate {
         -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet
     $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $Ctx.PfxPassword, $flags)
     Write-Step "Trusting certificate: $($cert.Thumbprint)"
-    Write-Host "    Subject: $($cert.Subject)"
+    Write-Detail "Subject: $($cert.Subject)"
 
     foreach ($storeName in 'Root','TrustedPublisher') {
         $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, 'LocalMachine')
@@ -9372,7 +9474,7 @@ function Invoke-InstPhase03_InstallDrivers {
             continue
         }
         $logFile = Join-Path $Ctx.Paths.Logs ("pnputil_{0}.log" -f $inf.BaseName)
-        Write-Host ("    {0} / {1}" -f $deviceLabel, $inf.Name)
+        Write-Detail ("{0} / {1}" -f $deviceLabel, $inf.Name)
 
         # Same rationale as P08/P09: use ProcessStartInfo with manually
         # quoted command line to handle paths containing spaces.
@@ -10177,7 +10279,7 @@ function Show-Help {
     Write-Host ''
     Write-Host '  # Use a specific installer version'
     Write-Host '  .\Deploy-AMDChipsetDriverOnWindowsServer.ps1 ``' -ForegroundColor Green
-    Write-Host "    -InstallerUrl 'https://drivers.amd.com/drivers/amd_chipset_software_7.11.26.2142.exe'" -ForegroundColor Green
+    Write-Detail "-InstallerUrl 'https://drivers.amd.com/drivers/amd_chipset_software_7.11.26.2142.exe'" -Color Green
     Write-Host ''
     Write-Host '  # Show registered phases'
     Write-Host '  .\Deploy-AMDChipsetDriverOnWindowsServer.ps1 -Action ListPhases' -ForegroundColor Green
