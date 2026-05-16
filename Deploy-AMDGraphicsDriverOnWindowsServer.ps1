@@ -697,8 +697,8 @@ $Script:PhaseTimings      = New-Object System.Collections.Generic.List[object]
 #                does NOT need manual bumping. If two users disagree
 #                about behaviour, comparing this hash tells them
 #                instantly whether they are running the same file.
-$Script:ScriptVersion = 'graphics-2026.05.16-r19'
-$Script:ScriptTag     = 'graphics-secureboot-baseline-r19'
+$Script:ScriptVersion = 'graphics-2026.05.16-r22'
+$Script:ScriptTag     = 'graphics-secureboot-baseline-r22'
 $Script:ScriptHash    = '(unknown)'
 try {
     # $PSCommandPath is the full path to the running script. Falls
@@ -2552,6 +2552,18 @@ function New-AmdDriverWdacSupplementalPolicy {
     # ONLY adds our specific signer. WDAC supplemental policies are
     # ADDITIVE - keeping AllowAll rules would effectively turn off
     # enforcement for everything, defeating the point of Secure Boot.
+    #
+    # r20 fix: We now strip the ENTIRE <FileRulesRef> container, not
+    # just its <FileRuleRef> children. On Windows Server 2025 (build
+    # 26100) the AllowAll.xml template embeds <FileRulesRef> nodes
+    # inside every <ProductSigners> block, and the WDAC schema
+    # (urn:schemas-microsoft-com:sipolicy) requires <FileRulesRef> to
+    # contain at least one <FileRuleRef> child. Leaving an empty
+    # <FileRulesRef> behind made Add-SignerRule fail in I02 with:
+    #   "Element 'FileRulesRef' has incomplete content. Required
+    #    element 'FileRuleRef' is needed."
+    # The <FileRulesRef> element itself is minOccurs=0, so removing
+    # the container outright is schema-valid.
     [xml]$xml = Get-Content $OutputXml
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('si', 'urn:schemas-microsoft-com:sipolicy')
@@ -2562,7 +2574,7 @@ function New-AmdDriverWdacSupplementalPolicy {
         '//si:Signers/si:Signer',
         '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:AllowedSigners/si:AllowedSigner',
         '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:DeniedSigners/si:DeniedSigner',
-        '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:FileRulesRef/si:FileRuleRef',
+        '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:FileRulesRef',
         '//si:CiSigners/si:CiSigner',
         '//si:UpdatePolicySigners/si:UpdatePolicySigner'
     )
@@ -4467,6 +4479,79 @@ function Expand-AmdInstaller {
     }
 }
 
+function Test-RobocopyResult {
+    # r22: Verify that a robocopy (or any other file-copy operation)
+    # produced a destination tree identical to the source tree. Used to
+    # catch silent partial-copy bugs that previously went undetected
+    # (e.g. the PowerShell Copy-Item wildcard quirk fixed in r21).
+    #
+    # Verification levels applied:
+    #   L1: Total file count and total directory count must match
+    #   L2: Relative-path set of all files must match (no missing files,
+    #       no unexpected extras)
+    # Size / hash level verification is intentionally NOT performed:
+    # robocopy /COPY:DAT preserves attributes/timestamps and the L1+L2
+    # check is sufficient signal for our use case. A 1-2 second overhead
+    # against a thousand-file tree on SSD is acceptable.
+    #
+    # Returns a result object; does NOT throw. The caller decides how to
+    # react (throw / warn / retry) based on .Success.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$SourcePath,
+        [Parameter(Mandatory)] [string]$DestinationPath
+    )
+
+    # Recursive enumeration of both trees. -Force includes hidden /
+    # system entries (not expected in the AMD installer payload, but
+    # defensive: a missed hidden file would still be a silent failure).
+    $srcFiles = @(Get-ChildItem -LiteralPath $SourcePath      -Recurse -File      -Force -ErrorAction SilentlyContinue)
+    $srcDirs  = @(Get-ChildItem -LiteralPath $SourcePath      -Recurse -Directory -Force -ErrorAction SilentlyContinue)
+    $dstFiles = @(Get-ChildItem -LiteralPath $DestinationPath -Recurse -File      -Force -ErrorAction SilentlyContinue)
+    $dstDirs  = @(Get-ChildItem -LiteralPath $DestinationPath -Recurse -Directory -Force -ErrorAction SilentlyContinue)
+
+    # ----- L1: count check -----
+    $countMatch = ($srcFiles.Count -eq $dstFiles.Count) -and ($srcDirs.Count -eq $dstDirs.Count)
+
+    # ----- L2: relative-path set check -----
+    # Strip the source / destination root prefix to produce comparable
+    # relative paths, then use a HashSet for O(n) lookup. Where-Object
+    # -notin against a large array would be O(n^2) and noticeably slow
+    # for the graphics installer tree (~10k files in some packages).
+    $srcLen = $SourcePath.TrimEnd('\').Length
+    $dstLen = $DestinationPath.TrimEnd('\').Length
+    $srcRel = $srcFiles | ForEach-Object { $_.FullName.Substring($srcLen).TrimStart('\') }
+    $dstRel = $dstFiles | ForEach-Object { $_.FullName.Substring($dstLen).TrimStart('\') }
+
+    # Case-insensitive comparison: NTFS is normally case-insensitive,
+    # and the AMD installer paths are mixed-case but stable. Treating
+    # 'PACKAGES\IODriver' the same as 'Packages\IODriver' is correct.
+    $dstRelSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $dstRel) { [void]$dstRelSet.Add($p) }
+    $srcRelSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $srcRel) { [void]$srcRelSet.Add($p) }
+
+    $missing = @($srcRel | Where-Object { -not $dstRelSet.Contains($_) })  # in src, not in dst
+    $extra   = @($dstRel | Where-Object { -not $srcRelSet.Contains($_) })  # in dst, not in src
+    $pathsMatch = ($missing.Count -eq 0) -and ($extra.Count -eq 0)
+
+    return [pscustomobject]@{
+        SourcePath      = $SourcePath
+        DestinationPath = $DestinationPath
+        SrcFileCount    = $srcFiles.Count
+        DstFileCount    = $dstFiles.Count
+        SrcDirCount     = $srcDirs.Count
+        DstDirCount     = $dstDirs.Count
+        SrcInfCount     = @($srcFiles | Where-Object Extension -eq '.inf').Count
+        DstInfCount     = @($dstFiles | Where-Object Extension -eq '.inf').Count
+        CountMatch      = $countMatch
+        PathsMatch      = $pathsMatch
+        Success         = $countMatch -and $pathsMatch
+        MissingFiles    = $missing
+        ExtraFiles      = $extra
+    }
+}
+
 function Expand-AmdInstaller_ViaLaunch {
     # Launches the AMD installer with /S, watches C:\AMD\ for the
     # extraction directory, waits for the file set to settle, then
@@ -4647,8 +4732,79 @@ function Expand-AmdInstaller_ViaLaunch {
 
     Write-Host "    Detected extraction at $($newDir.FullName) (waited $([math]::Round($sw.Elapsed.TotalSeconds,1))s, $lastInfCount INFs)" -ForegroundColor DarkGray
 
-    Copy-Item -Path (Join-Path $newDir.FullName '*') `
-              -Destination $DestinationPath -Recurse -Force -ErrorAction SilentlyContinue
+    # r21 fix: replace Copy-Item with robocopy.
+    # The previous code:
+    #   Copy-Item -Path "$src\*" -Destination $dst -Recurse -Force -ErrorAction SilentlyContinue
+    # exhibits a long-standing PowerShell 5.1 quirk: when -Path contains a
+    # trailing wildcard AND -Destination already exists AND -Force is used,
+    # top-level subdirectories are created at the destination but their
+    # contents are NOT always recursively copied. On Windows Server 2025
+    # (build 26100) ja-JP this was reproducibly observed against the AMD
+    # chipset extracted tree (sister script's r52 fix), so the same
+    # mitigation is applied here to the graphics extraction path. The
+    # graphics installer payload (~600 MB, ~19-67 INFs) is even more
+    # vulnerable to silent partial-copy than the chipset one.
+    #
+    # robocopy is the right tool for this job because:
+    #   1. Its recursion is unambiguous and reliable across edge cases.
+    #   2. It has built-in lock-retry (/R:n /W:n) for residual handles.
+    #   3. It reports a structured exit code so we can verify success.
+    #   4. It is available on every supported Windows host (no add-on).
+    #
+    # /E         : copy subdirectories, INCLUDING empty ones
+    # /COPY:DAT  : copy Data + Attributes + Timestamps (omit ACLs/owner)
+    # /R:3 /W:2  : 3 retries with 2s wait per attempted-locked-file
+    # /NFL /NDL  : suppress per-file / per-directory log output (noisy)
+    # /NJH /NJS  : suppress the job header / summary footer
+    # /NP        : suppress per-file progress bar (also noisy)
+    # /MT:8      : 8 copy threads (small files speed up significantly)
+    #
+    # robocopy exit codes 0-7 = success/info (no failures); >=8 = error.
+    & robocopy.exe $newDir.FullName $DestinationPath /E /COPY:DAT /R:3 /W:2 `
+        /NFL /NDL /NJH /NJS /NP /MT:8 | Out-Null
+    $robocopyExit = $LASTEXITCODE
+    if ($robocopyExit -ge 8) {
+        throw ("robocopy failed copying '{0}' -> '{1}' with exit code {2}. Robocopy exit codes >= 8 indicate hard failures (access denied, missing source, etc.). Inspect the source and destination manually." -f $newDir.FullName, $DestinationPath, $robocopyExit)
+    }
+
+    # r22: post-copy verification.
+    # Even though robocopy is more reliable than Copy-Item, "external
+    # tool exit code = success" is not a strong enough contract for an
+    # irreversible step in the middle of a long pipeline. We follow up
+    # with an L1+L2 inventory comparison to catch any discrepancy that
+    # the exit code might miss (file system quirks, partial copy due to
+    # permission edge cases, etc.). If the verification fails we throw -
+    # consistent with the rest of P04 (e.g. the "0 INFs" guard below),
+    # because letting P05+ run on an incomplete extract just propagates
+    # the corruption to harder-to-diagnose downstream symptoms.
+    $verify = Test-RobocopyResult -SourcePath $newDir.FullName -DestinationPath $DestinationPath
+    Write-Host ("    Post-copy verification: src/dst files = {0}/{1}, src/dst dirs = {2}/{3}, INFs = {4}/{5}" `
+        -f $verify.SrcFileCount, $verify.DstFileCount,
+            $verify.SrcDirCount,  $verify.DstDirCount,
+            $verify.SrcInfCount,  $verify.DstInfCount) -ForegroundColor DarkGray
+
+    if (-not $verify.Success) {
+        Write-Warn2 ("    robocopy reported exit={0} but post-copy verification FAILED:" -f $robocopyExit)
+        Write-Warn2 ("      file counts (src/dst): {0}/{1}    dir counts (src/dst): {2}/{3}" `
+            -f $verify.SrcFileCount, $verify.DstFileCount, $verify.SrcDirCount, $verify.DstDirCount)
+        if ($verify.MissingFiles.Count -gt 0) {
+            Write-Warn2 ("      Missing in destination ({0} file(s); showing first 10):" -f $verify.MissingFiles.Count)
+            $verify.MissingFiles | Select-Object -First 10 | ForEach-Object {
+                Write-Host ("        - $_") -ForegroundColor DarkYellow
+            }
+        }
+        if ($verify.ExtraFiles.Count -gt 0) {
+            Write-Warn2 ("      Unexpected in destination ({0} file(s); showing first 10):" -f $verify.ExtraFiles.Count)
+            $verify.ExtraFiles | Select-Object -First 10 | ForEach-Object {
+                Write-Host ("        - $_") -ForegroundColor DarkYellow
+            }
+        }
+        throw ("Post-robocopy verification failed: src={0} files / dst={1} files, missing={2}, extra={3}. The source tree at '{4}' appears intact; the destination at '{5}' is incomplete. Re-run with -CleanWorkRoot, or inspect both trees manually." `
+            -f $verify.SrcFileCount, $verify.DstFileCount, $verify.MissingFiles.Count, $verify.ExtraFiles.Count, $newDir.FullName, $DestinationPath)
+    }
+
+    Write-Host ("    robocopy result: exit={0}  files copied={1}  INFs copied={2}  [VERIFIED]" `
+        -f $robocopyExit, $verify.DstFileCount, $verify.DstInfCount) -ForegroundColor DarkGray
     Write-Ok "    Extracted via installer self-launch from $($newDir.FullName)"
 }
 
@@ -5325,6 +5481,29 @@ function Invoke-PrepPhase02_AcquireTools {
     Write-Host "    WDK build    : $($Ctx.Os.WdkBuild)"
     Write-Host "    Notes        : $($Ctx.Os.ToolkitNotes)"
 
+    # r20: On a clean-installed host the SDK and WDK packages are
+    # absent and must be downloaded via winget. The bootstrap EXEs
+    # (winsdksetup.exe / wdksetup.exe) are ~1.3 MB each but the
+    # background payloads they pull from Microsoft Download CDN are
+    # several hundred MB to multi-GB; the install typically takes
+    # ~5 min for the SDK and ~3 min for the WDK on a typical
+    # connection in JP (total P02 elapsed ~8-10 min). On subsequent
+    # runs in the same workspace, the P02 PhaseMarker is hit and
+    # this whole block is skipped in ~2 s. We surface this once,
+    # up-front, so the user is not surprised by the long pause.
+    $needsSdk = (-not $signtool) -and $Ctx.Os.WingetSdkId
+    $needsWdk = (-not $inf2cat)  -and $Ctx.Os.WingetWdkId
+    if ($needsSdk -or $needsWdk) {
+        $missing = @()
+        if ($needsSdk) { $missing += 'Windows SDK (~5 min)' }
+        if ($needsWdk) { $missing += 'Windows WDK (~3 min)' }
+        Write-Warn2 ('First-run install required for: {0}.' -f ($missing -join ', '))
+        Write-Host  '       Bootstrap EXEs are small (~1-2 MB) but each fetches several hundred MB'  -ForegroundColor DarkYellow
+        Write-Host  '       to multi-GB of background payload from Microsoft Download CDN.'         -ForegroundColor DarkYellow
+        Write-Host  '       Expected P02 elapsed on a clean host (JP): ~8-10 minutes.'              -ForegroundColor DarkYellow
+        Write-Host  '       Subsequent runs in the same workspace will skip P02 (PhaseMarker hit).' -ForegroundColor DarkGray
+    }
+
     $wingetWorks = (Test-WingetWorking) -and $Ctx.Os.CanInstallWinget
     if ($wingetWorks -and $Ctx.Os.WingetSdkId -and -not $signtool) {
         Write-Step "Windows SDK: winget ($($Ctx.Os.WingetSdkId))"
@@ -5566,13 +5745,44 @@ function Invoke-PrepPhase04_ExtractInstaller {
 
     # Nested archives - covers MSIs/CABs from /layout, sub-installers
     # extracted by Strategy 3, etc.
+    #
+    # r22: previously this loop called 7-Zip with `2>$null | Out-Null`,
+    # which silently swallowed any error. A corrupt or password-locked
+    # nested archive would extract zero files and produce no visible
+    # failure, mirroring the silent-fail pattern that bit us with
+    # Copy-Item in pre-r21. We now capture $LASTEXITCODE and verify
+    # that at least one file emerged. Exit codes for 7-Zip:
+    #   0     = success
+    #   1     = warning (non-fatal, e.g. some files locked but rest OK)
+    #   2     = fatal error (corrupt archive, unsupported format, etc.)
+    #   7     = command-line error
+    #   8     = memory allocation failure
+    #   255   = user interrupted
+    # We treat exit <= 1 as acceptable and >= 2 as hard failure.
     $nested = Get-ChildItem -Path $Ctx.Paths.Extract -Recurse -Include *.msi,*.cab,*.7z,*.zip -ErrorAction SilentlyContinue
     foreach ($n in $nested) {
         $dest = Join-Path $n.DirectoryName ($n.BaseName + '__contents')
         if (Test-Path $dest) { continue }
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
         Write-Host "    Nested: $($n.Name)" -ForegroundColor DarkCyan
-        & $Ctx.SevenZip x $n.FullName "-o$dest" -y -bsp0 -bso0 2>$null | Out-Null
+
+        & $Ctx.SevenZip x $n.FullName "-o$dest" -y -bsp0 -bso0 2>&1 | Out-Null
+        $sevenZipExit = $LASTEXITCODE
+        if ($sevenZipExit -ge 2) {
+            throw ("7-Zip failed to extract nested archive '{0}' (exit={1}). Common causes: corrupt archive, password-protected payload, or unsupported nested format. Inspect '{2}' manually, or re-run with -CleanWorkRoot to fetch a fresh installer." -f $n.FullName, $sevenZipExit, $dest)
+        }
+
+        # 0 files extracted is suspicious but not always fatal: some
+        # nested MSIs are metadata-only and legitimately produce no
+        # payload. We log it but defer the final decision to the
+        # downstream "0 INFs" guard, which catches the cases that
+        # actually matter for the pipeline.
+        $extractedCount = @(Get-ChildItem -LiteralPath $dest -Recurse -File -Force -ErrorAction SilentlyContinue).Count
+        if ($extractedCount -eq 0) {
+            Write-Warn2 ("      7-Zip exit={0} but 0 files extracted from {1} - flagged for downstream INF-count check" -f $sevenZipExit, $n.Name)
+        } else {
+            Write-Host ("      -> exit={0}, {1} file(s) extracted" -f $sevenZipExit, $extractedCount) -ForegroundColor DarkGray
+        }
     }
 
     # Final verification: after all extraction and nested expansion,

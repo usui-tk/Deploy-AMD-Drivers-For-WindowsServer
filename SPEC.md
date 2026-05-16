@@ -787,7 +787,7 @@ When adding a fourth sister script, the 6 cross-script-identical functions are l
 
 ### Identification
 
-- **Current revision**: `chipset-2026.05.16-r50` (tag: `chipset-secureboot-baseline-r50`)
+- **Current revision**: `chipset-2026.05.16-r54` (tag: `chipset-secureboot-baseline-r54`)
 - **Workspace**: `C:\AMD-Chipset-WS\`
 - **Self-signed cert subject**: `CN=AMD Chipset Driver Self-Sign (WS2025 Lab, At Own Risk)`
 - **Self-signed cert files**: `cert\AMD-Chipset-Driver-CodeSign.{pfx,cer}` (r48+; pre-r48 used `AMD-Driver-CodeSign.{pfx,cer}`)
@@ -818,14 +818,139 @@ When adding a fourth sister script, the 6 cross-script-identical functions are l
 
 ### Phase quirks
 
-- **P03 / P04**: Installer EXE is extracted via 7-Zip; if extraction fails, fall back to launching the EXE silently and harvesting from `C:\AMD\`.
-- **P05**: INFs are classified by source variant: `W11x64` (Win11) / `WTx64` (Workstation x64) / `WT6A_INF` / `WT64A`. Only the OS-matching variant is selected for the pipeline.
+- **P03 / P04** (r54): Multi-strategy installer extraction with three fallback layers (see "AMD 8.x installer architecture" below for the architecture that drives this):
+    - **Strategy 1/3**: 7-Zip auto-detect. Works for AMD 6.x and earlier self-extracting EXEs.
+    - **Strategy 2/3** (r54, new): InstallShield `/a` administrative install + recursive `msiexec /a`. Standard path for AMD 8.x+ installers (NSIS outer + InstallShield SFX inner). Emits a per-OS-variant INF-coverage diagnostic post-extraction.
+    - **Strategy 3/3**: Launch installer with `/S`, watch `C:\AMD\` for the extraction directory, terminate before install runs. Fragile final fallback retained for unrecognised formats.
+- **P05**: INFs are classified by source variant: `W11x64` (Win11) / `WTx64` (Workstation x64) / `WT6A_INF` / `WT64A`. Only the OS-matching variant is selected for the pipeline (per `Get-PreferredAmdSourceVariants`).
 - **P06**: PSP driver (`amdpsp.inf`) is **never patched** without an explicit BitLocker warning — see Disclaimer §5.
 
 ### Known constraints
 
 - 5-year cert validity (hard-coded in P07).
 - Patched drivers retain their AMD-published `DriverDate`; comparing AS-IS vs TO-BE uses `.Date` truncation to avoid timezone false positives (see Part D D.1).
+
+### AMD 8.x installer architecture (r54+)
+
+Starting with AMD Chipset Software 8.x (first observed in version 8.02.18.557, distributed early 2026), AMD switched the installer bootstrapper to a two-layer wrapper that defeats 7-Zip-based extraction. The script's r54 multi-strategy extraction is designed against this architecture; the layered structure is documented here so that extraction failures can be diagnosed.
+
+#### Two-layer wrapper structure
+
+The downloaded `amd_chipset_software_*.exe` (~78 MB) is an NSIS self-extracting shell wrapping an InstallShield SFX:
+
+```
+amd_chipset_software_8.02.18.557.exe   (~78 MB)
+└── Outer layer: NSIS self-extracting EXE
+    │   (7-Zip CAN extract this layer)
+    │
+    ├── AMD_Chipset_Drivers.exe        ← inner installer (~75 MB)
+    │   └── Inner layer: InstallShield SFX (ISSetupStream format)
+    │       │   (7-Zip CANNOT extract; only InstallShield can: /a switch)
+    │       │
+    │       ├── AMD_Chipset_Drivers.msi   (parent, ARPSYSTEMCOMPONENT=1)
+    │       │
+    │       └── Chipset_Software\
+    │           ├── AMD-GPIO2-Driver.msi
+    │           ├── AMD-PCI-Driver.msi
+    │           ├── AMD-PSP-Driver.msi
+    │           ├── AMD-SMBus-Driver.msi
+    │           ├── ... (35 sub-MSIs total in 8.02.18.557)
+    │           └── AMD-WBD-Driver.msi
+    │
+    └── (auxiliary support files)
+```
+
+#### After full extraction: OS-variant directory layout
+
+Each sub-MSI, when expanded via `msiexec /a`, unpacks its driver binaries into three OS-variant subdirectories per driver:
+
+```
+<DestinationPath>\AMD\Chipset_Software\Binaries\<DriverName>\
+    ├── W11x64\          ← Windows 11 / WS2022 / WS2025 (build >= 22000)
+    │   ├── <driver>.inf
+    │   ├── <driver>.sys
+    │   ├── <driver>.cat
+    │   └── ...
+    ├── WTx64\           ← Windows 10 / WS2019 / WS2016 (build < 22000, 64-bit)
+    │   └── (older driver versions for the same hardware)
+    └── WTx86\           ← 32-bit Windows (never applicable to Server SKUs)
+        └── (32-bit driver versions; included for completeness)
+```
+
+#### OS variant selection logic
+
+`Get-PreferredAmdSourceVariants -OsContext $Ctx.Os` decides which variant subdirectory feeds the P05 / P06 / I03 pipeline. The decision is OS-build-driven, not heuristic:
+
+| Host OS | Build | Base Windows | Preferred variant | Rationale |
+| --- | --- | --- | --- | --- |
+| Windows Server 2025 | 26100 | Windows 11 24H2 | `W11x64` | Kernel-equivalent to Win11 24H2; supports Pluton / PMF / USB4 / 3D V-Cache |
+| Windows Server 2022 | 20348 | Iron-wave | `W11x64` | Closer to W11 ABI than W10 |
+| Windows Server 2019 | 17763 | Redstone 5 | `WTx64` | Predates Win11; uses older driver ABI |
+| Windows Server 2016 | 14393 | Threshold | `WTx64` | Threshold era = WTx64 by definition |
+
+Other OS contexts fall back to `@('W11x64','WTx64')` (try both). The r54 extraction unpacks all three variants and lets the pipeline pick; this isolation keeps the extraction layer format-agnostic so future host-OS changes only need updates to `Get-PreferredAmdSourceVariants`.
+
+#### AMD's actual driver registration logic (key finding)
+
+Each sub-MSI's `CustomAction` table stores three OS-specific VBScript binaries as BLOBs in the `Binary` table (key `NewBinary20`):
+
+- `Install_Driver_W11x64` (CustomAction type 7238 = VBScript in Binary)
+- `Install_Driver_WTx64`
+- `Install_Driver_WTx86`
+
+A separate `GetOSBuildnum_22000` action (type 38, inline VBScript) queries `Win32_OperatingSystem.BuildNumber` and sets MSI property `W11BUILDNUM=1` when build >= 22000. The `InstallExecuteSequence` uses `W11BUILDNUM` to pick which of the three variant scripts to run.
+
+The VBScript itself (extracted from the GPIO2 sub-MSI in 8.02.18.557) contains only:
+
+```vbs
+Function Install_Driver_W11x64()
+    Set objShell = CreateObject("WScript.Shell")
+    Dim StrDir : StrDir = objShell.ExpandEnvironmentStrings("%SYSTEMDRIVE%")
+    Dim strcmd : strcmd = StrDir & "\Windows\System32\pnputil.exe" _
+        & " /add-driver " _
+        & chr(34) & StrDir & "\AMD\Chipset_Software\Binaries\GPIO2 Driver\W11x64\amdgpio2.inf" & chr(34) _
+        & " /install"
+    iLogMessage "Install_Driver_W11x64 : " & strcmd
+    CreateObject("Wscript.Shell").Run strcmd, 0, True
+End Function
+```
+
+In other words: AMD's chipset installer performs **no hardware detection at all**. It calls `pnputil /add-driver /install` for the OS-appropriate INF and lets the Windows kernel match each INF's `[Manufacturer]` Hardware IDs against the actual PnP device inventory. Devices that don't match remain unmatched; that is the expected behaviour, not a defect of either the AMD installer or this script.
+
+The script's I03 phase reproduces this exact pattern (`pnputil /add-driver <patched.inf> /install`), with the addition of self-signature handling required for Windows Server SKUs.
+
+#### Why 7-Zip fails on the inner layer
+
+The InstallShield SFX wraps the parent MSI and sub-MSIs in an `ISSetupStream`-formatted stream. This format is proprietary to InstallShield and is not a standard archive format. 7-Zip's `PE` handler identifies the EXE wrapper and exits cleanly (exit 0), but extracts only the wrapper's resource section, leaving an empty result tree (no `.msi` / `.inf` files). The only known way to unpack `ISSetupStream` content is via InstallShield's own `/a` administrative-install switch.
+
+7-Zip's failure mode is silent (exit 0 with no payload), which is why the script's `_HasPayload` success criterion guards each strategy with a presence check for `.inf` / `.msi` / `.cab` files rather than relying on the exit code alone.
+
+#### Why /a admin install is safe (no drivers installed at extract time)
+
+Both InstallShield `/a` and `msiexec /a` are designed to extract MSI contents WITHOUT running install-side CustomActions:
+
+- `/a` runs `AdminExecuteSequence`, which is limited to `FileCost`, `InstallFiles`, and similar file-copy operations.
+- `/a` does **not** run `InstallExecuteSequence`, where the driver-registration `CustomAction`s live (`Install_Driver_W11x64` etc.).
+
+Empirical verification on AMD 8.02.18.557 (Renoir / WS2025):
+
+- No driver entries appear in `Win32_PnPSignedDriver` after `/a`
+- No `C:\AMD\` side-effects
+- No sub-installer processes spawn
+- Only files are written to `TARGETDIR`; nothing executes
+
+#### 35 sub-MSIs in 8.02.18.557 (informational)
+
+The sub-MSIs ship in the parent MSI's `ISChainPackage` table. Grouped by hardware applicability (Renoir = Zen 2 Mobile, 2020-era CPU; used here as the reference older platform):
+
+| Category | Sub-MSI features (Feature.Name) | Renoir applicability |
+| --- | --- | --- |
+| Core chipset (always present) | `GPIO2`, `GPIO3` (Promontory), `PCI`, `PSP`, `SMBUS`, `RYZENPPKG`, `I2C`, `UART`, `INTERFACE`, `FILTERUSB` | High |
+| Power Management Framework (newer-hw) | `RPMF6000` (6000-series), `PHPMF7040` (7040-series), `TPMF7736` (7736-series), `SPMF8000` (8000-series), `NAIPMF300` / `TAIPMF300` / `AIPMFMAX300` (AI 300 series) | None (Phoenix Point and later only) |
+| Sensor Fusion Hub | `SFHDRVR`, `SFHI2C`, `SFH1.1` | Partial |
+| Modern platform features | `USB4CM`, `CVAC` (3D V-Cache Optimizer), `MSFT1` / `MSFT2` (Pluton TPM), `HSMP`, `S0I3`, `MAIL` (Mailbox Drv), `UPEP` (Micro-PEP), `APPCOMPATDB`, `AS4ACPI`, `CIR`, `IOV_WT`, `OEMPF` (Provisioning), `PPM`, `WBD` | Low (mostly Phoenix Point and later) |
+
+Older AMD platforms (Renoir, Cezanne) will produce fewer device-driver matches in I04 because most newer-platform sub-MSIs carry INFs whose Hardware IDs don't exist on those CPUs. **This is expected and not a script defect.** On X13 Gen 1 (Ryzen 5 PRO 4650U / Renoir), roughly 5-8 of the 35 driver packages typically match real devices; the remaining packages remain in the driver store but inactive.
 
 ---
 
@@ -1099,6 +1224,30 @@ This had two downsides:
 **Fix (NPU r5)**: Added `''` to the ValidateSet: `[ValidateSet('','PHX','HPT','STX','KRK')]`. The empty value represents "no override; auto-detect via Get-AmdNpuPlatform", which matches the prior default behaviour.
 
 **Scope**: NPU-only.
+
+---
+
+## D.12 Chipset r54 — InstallShield SFX extraction for AMD 8.x+ installers
+
+**Summary**: Starting with AMD Chipset Software 8.x (8.02.18.557, observed May 2026), the installer bootstrapper changed to a two-layer wrapper: an outer NSIS SFX wrapping an inner InstallShield SFX (`ISSetupStream` format). 7-Zip can decode the outer layer but exits cleanly (exit 0) on the inner layer with no payload, so the script's pre-r54 two-strategy extraction (7-Zip + launch-and-watch) silently produced an incomplete result.
+
+**Observed symptom (X13 Gen 1 / Ryzen 5 PRO 4650U / WS2025, May 2026)**: After P04 ExtractInstaller succeeded, P05 AnalyzeInfs reported only 2 INFs in the extract tree (`AmsMailbox.inf` + `AmdAppCompat.inf`) instead of the expected ~32. I04 PostInstallVerify reported 42 unmatched AMD devices in Device Manager.
+
+**Root cause**: The AMD 8.x inner installer is `ISSetupStream`-formatted. 7-Zip's `PE` handler matches the SFX EXE shell and returns exit 0, but only extracts the EXE's resource-section files — none of the 35 sub-MSIs reach the destination tree. Strategy 1's `_HasPayload` guard noticed this and triggered Strategy 2 (launch + watch), which is fragile: AMD's installer aggressively cleans up `C:\AMD\` after extraction, often before the watcher can grab the files.
+
+**Fix (Chipset r54)**: New Strategy 2/3 inserted between the old 7-Zip and launch-watch strategies. The new strategy:
+
+1. 7-Zips the outer NSIS shell to a staging directory (the outer layer remains 7-Zip-extractable).
+2. Locates the inner `AMD_Chipset_Drivers.exe` (InstallShield SFX).
+3. Invokes the InstallShield SFX with `/a /s /v"TARGETDIR=... GONOGO=PUBLICGO /qn"`, which extracts the parent MSI plus all 35 sub-MSIs into a staging tree without running any install-side CustomActions.
+4. Runs `msiexec /a <sub.msi> TARGETDIR=<final dest>` on each sub-MSI to unpack its INF / SYS / CAT tree into the final destination.
+5. Emits a per-OS-variant diagnostic showing INF coverage by `W11x64` / `WTx64` / `WTx86` subdirectory, marking the variant preferred for the host OS as `[PREFERRED]`.
+
+After Strategy 2 succeeds, the existing P05 / P06 / I03 pipeline picks up the full INF tree and selects the OS-appropriate variant via `Get-PreferredAmdSourceVariants` (unchanged from earlier revisions).
+
+**Scope**: Chipset only. Graphics and NPU installers use different formats (Graphics is a WIX BURN bootstrapper, NPU is a plain ZIP) and don't need this strategy.
+
+**Renoir-specific note**: Even with the r54 fix, X13 Gen 1 will see ~27 of the 35 INF packages remain "no device" because their Hardware IDs target Phoenix Point and later CPUs. The ~5-8 packages that DO match real devices are the meaningful coverage improvement. This is expected and documented in B.1's "35 sub-MSIs" table.
 
 ---
 

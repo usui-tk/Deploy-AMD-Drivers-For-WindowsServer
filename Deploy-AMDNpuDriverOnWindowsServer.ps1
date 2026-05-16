@@ -275,8 +275,8 @@ $Script:CertValidityYears       = $CertValidityYears
 # =============================================================================
 # Script-scope state
 # =============================================================================
-$Script:ScriptVersion       = 'npu-2026.05.16-r5'
-$Script:ScriptTag           = 'npu-secureboot-baseline-r5'
+$Script:ScriptVersion       = 'npu-2026.05.16-r6'
+$Script:ScriptTag           = 'npu-secureboot-baseline-r6'
 $Script:ScriptName          = 'Deploy-AMDNpuDriverOnWindowsServer'
 $Script:RepoUrl             = 'https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer'
 $Script:CertSubjectCn       = 'AMD NPU Driver Self-Sign (WS2025 Lab, At Own Risk)'
@@ -2615,6 +2615,30 @@ function Install-RequiredTools {
     #>
     [CmdletBinding()]
     param()
+
+    # r6: Pre-flight detection so we can surface a single, consolidated
+    # heads-up to the user BEFORE the long winget runs start. On a
+    # clean-installed host the SDK and WDK packages are absent and
+    # must be downloaded via winget. The bootstrap EXEs are small
+    # (~1.3 MB each) but each fetches several hundred MB to multi-GB
+    # of background payload from Microsoft Download CDN; total P02
+    # elapsed on a clean host (JP) typically lands in the 8-10 minute
+    # range. On subsequent runs in the same workspace, the P02
+    # PhaseMarker is hit and this whole block is skipped in ~2 s.
+    $preSigntool = Find-SignToolPath
+    $preInf2cat  = Find-Inf2CatPath
+    $needsSdk = -not $preSigntool
+    $needsWdk = -not $preInf2cat
+    if ($needsSdk -or $needsWdk) {
+        $missing = @()
+        if ($needsSdk) { $missing += 'Windows SDK (~5 min)' }
+        if ($needsWdk) { $missing += 'Windows WDK (~3 min)' }
+        Write-Warn2 ('First-run install required for: {0}.' -f ($missing -join ', '))
+        Write-Host  '       Bootstrap EXEs are small (~1-2 MB) but each fetches several hundred MB'  -ForegroundColor DarkYellow
+        Write-Host  '       to multi-GB of background payload from Microsoft Download CDN.'         -ForegroundColor DarkYellow
+        Write-Host  '       Expected P02 elapsed on a clean host (JP): ~8-10 minutes.'              -ForegroundColor DarkYellow
+        Write-Host  '       Subsequent runs in the same workspace will skip P02 (PhaseMarker hit).' -ForegroundColor DarkGray
+    }
 
     Write-SubHeader2 'Step 1/3: signtool.exe (Windows SDK)'
     $signtool = Find-SignToolPath

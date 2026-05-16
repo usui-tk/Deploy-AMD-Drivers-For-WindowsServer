@@ -912,3 +912,78 @@ This workflow has three layers:
 Combining the self-hosted runners with a scheduler that starts/stops them only on demand (e.g. AWS Lambda + SSM) keeps monthly cost down to roughly $5–10. The workflow stops at PrepareVerify; it does not attempt Install (since EPYC machines have no consumer Ryzen / NPU hardware to bind to).
 
 > **Future**: when a physical NPU machine becomes available, an additional CI job can be added that runs `-Action Install` on a dedicated self-hosted runner (Ryzen AI 9 HX 370 mini-PC or similar). Until then, `-Action Install` for the NPU script must be exercised manually by operators with NPU hardware, and results reported via GitHub Issues.
+
+---
+
+## 8. r54+ — AMD Chipset Software 8.x extraction diagnostic format
+
+Starting with the Chipset script's r54 revision, the P04 ExtractInstaller phase includes a new "Strategy 2/3" path designed for AMD Chipset Software 8.x (8.02.18.557 and later). This section documents the expected diagnostic output and the validation procedure for the new extraction path.
+
+### 5.1 Why a new strategy was needed
+
+AMD Chipset Software 8.x ships as a two-layer wrapper:
+
+1. **Outer layer**: NSIS self-extracting EXE (7-Zip can extract this).
+2. **Inner layer**: InstallShield SFX in `ISSetupStream` format (7-Zip CANNOT extract; only InstallShield's own `/a` admin install can).
+
+Pre-r54 revisions detected the 7-Zip failure on the inner layer and fell back to launching the installer and harvesting from `C:\AMD\`, which is fragile because AMD aggressively cleans up that directory. r54 inserts a dedicated InstallShield-aware strategy between the old 7-Zip strategy and the launch-watch fallback.
+
+See `SPEC.md` §B.1 "AMD 8.x installer architecture (r54+)" for the full architecture.
+
+### 5.2 Expected diagnostic output when Strategy 2 succeeds
+
+When the installer is AMD 8.x, P04 console output should look approximately like the following (truncated for readability):
+
+```
+[*] Phase 04 :  P04 ExtractInstaller   (Build group)
+[*] Extracting installer (multiple strategies will be attempted)
+    Strategy 1/3: 7-Zip auto-detect
+[!] 7-Zip auto-detect produced no usable payload (exit 0) - trying next strategy
+    Strategy 2/3: InstallShield /a admin install (AMD 8.x+ chain)
+      Step 1/3: 7-Zip outer NSIS shell...
+      Inner SFX  : C:\AMD-Chipset-WS\is-stage-nsis\AMD_Chipset_Drivers.exe (75.3 MB)
+      Step 2/3: InstallShield /a admin install...
+      Unpacked   : 36 MSI files (InstallShield exit 0)
+      Step 3/3: msiexec /a on 36 sub-MSI(s)...
+      msiexec /a : 35 succeeded, 1 failed
+      INF total  : 96
+      [PREFERRED] W11x64    :  32 INF(s)
+      [ skip    ] WTx64     :  32 INF(s)
+      [ skip    ] WTx86     :  32 INF(s)
+[+]    Extracted via InstallShield admin install chain
+[+] Extracted to: C:\AMD-Chipset-WS\extract
+```
+
+### 5.3 Validation checklist
+
+When the new path runs successfully, all of these should hold:
+
+| Check | Expected value | How to verify |
+| --- | --- | --- |
+| InstallShield exit code | `0` (best) or `1` (acceptable if MSI count is correct) | Console line `Unpacked   : NN MSI files (InstallShield exit X)` |
+| MSI count | `>= 36` (1 parent + 35 sub-MSIs for 8.02.18.557; future versions may differ) | Same console line |
+| msiexec /a success rate | `>= 30` of `36` | Console line `msiexec /a : NN succeeded, M failed` |
+| INF total | `>= 80` (varies with version; usually 96 in 8.02.18.557) | Console line `INF total  : NN` |
+| PREFERRED variant has non-zero INFs | `[PREFERRED] <variant> : >= 25 INF(s)` | Console line; **this is the critical signal** |
+| PREFERRED variant matches host OS | `W11x64` on WS2022/WS2025; `WTx64` on WS2016/WS2019 | Cross-check `$Ctx.Os` from console banner |
+
+### 5.4 Troubleshooting
+
+If the PREFERRED variant shows `0 INF(s)` despite the extraction succeeding, the most likely causes are:
+
+1. **InstallShield /a failed silently**: Check `C:\AMD-Chipset-WS\installshield-admin.log` for MSI errors during the admin install. Look for `Action ended ...` lines with non-zero return values.
+
+2. **msiexec /a failed for the OS-variant sub-MSIs**: Check `C:\AMD-Chipset-WS\msiexec-admin-*.log` for the specific failing sub-MSIs. Each sub-MSI has its own log named after the MSI filename.
+
+3. **AMD changed the directory layout in a future version**: If you are running against a Chipset Software version newer than 8.02.18.557 and the `Binaries\<DriverName>\<OS>\` structure changed, the `Get-AmdSourceVariant` classifier (script line ~5003) may need updating. File a GitHub issue with the directory tree under `C:\AMD-Chipset-WS\extract\`.
+
+### 5.5 Fallback behaviour
+
+If Strategy 2 fails for any reason (caught by the `try { ... } catch` block in `Expand-AmdInstaller`), the script falls through to Strategy 3/3 (launch + watch), preserving the pre-r54 behaviour. The console output in that case will be:
+
+```
+[!] InstallShield /a strategy failed: <error message>
+    Strategy 3/3: launch installer and harvest from C:\AMD\
+```
+
+This is the same fallback path used by pre-r54 revisions and should be considered a regression fallback only.

@@ -562,8 +562,8 @@ $Script:PhaseTimings      = New-Object System.Collections.Generic.List[object]
 #                does NOT need manual bumping. If two users disagree
 #                about behaviour, comparing this hash tells them
 #                instantly whether they are running the same file.
-$Script:ScriptVersion = 'chipset-2026.05.16-r50'
-$Script:ScriptTag     = 'chipset-secureboot-baseline-r50'
+$Script:ScriptVersion = 'chipset-2026.05.16-r54'
+$Script:ScriptTag     = 'chipset-secureboot-baseline-r54'
 $Script:ScriptHash    = '(unknown)'
 try {
     # $PSCommandPath is the full path to the running script. Falls
@@ -2417,6 +2417,18 @@ function New-AmdDriverWdacSupplementalPolicy {
     # ONLY adds our specific signer. WDAC supplemental policies are
     # ADDITIVE - keeping AllowAll rules would effectively turn off
     # enforcement for everything, defeating the point of Secure Boot.
+    #
+    # r51 fix: We now strip the ENTIRE <FileRulesRef> container, not
+    # just its <FileRuleRef> children. On Windows Server 2025 (build
+    # 26100) the AllowAll.xml template embeds <FileRulesRef> nodes
+    # inside every <ProductSigners> block, and the WDAC schema
+    # (urn:schemas-microsoft-com:sipolicy) requires <FileRulesRef> to
+    # contain at least one <FileRuleRef> child. Leaving an empty
+    # <FileRulesRef> behind made Add-SignerRule fail in I02 with:
+    #   "Element 'FileRulesRef' has incomplete content. Required
+    #    element 'FileRuleRef' is needed."
+    # The <FileRulesRef> element itself is minOccurs=0, so removing
+    # the container outright is schema-valid.
     [xml]$xml = Get-Content $OutputXml
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('si', 'urn:schemas-microsoft-com:sipolicy')
@@ -2427,7 +2439,7 @@ function New-AmdDriverWdacSupplementalPolicy {
         '//si:Signers/si:Signer',
         '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:AllowedSigners/si:AllowedSigner',
         '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:DeniedSigners/si:DeniedSigner',
-        '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:FileRulesRef/si:FileRuleRef',
+        '//si:SigningScenarios/si:SigningScenario/si:ProductSigners/si:FileRulesRef',
         '//si:CiSigners/si:CiSigner',
         '//si:UpdatePolicySigners/si:UpdatePolicySigner'
     )
@@ -3644,15 +3656,31 @@ function Get-LatestAmdChipsetUrl {
 function Expand-AmdInstaller {
     # Multi-strategy AMD chipset installer extraction.
     #
-    # Two strategies, in order of preference:
+    # Three strategies, in order of preference:
     #   Strategy 1: 7-Zip auto-detect
     #               Works for old (6.x and earlier) self-extracting EXEs.
     #               Free, fast, no side effects. Fails cleanly on modern
     #               (8.x+) AMD bootstrappers.
-    #   Strategy 2: launch installer with /S, watch C:\AMD\ for the
+    #   Strategy 2 (r54, NEW): InstallShield /a admin install + recursive
+    #               msiexec /a. The AMD 8.x bootstrapper is a two-layer
+    #               wrapper:
+    #                 Outer: NSIS self-extracting EXE (7-Zip extractable)
+    #                 Inner: InstallShield SFX in ISSetupStream format
+    #                        (7-Zip CANNOT extract; only InstallShield can)
+    #               This strategy 7-Zips the outer NSIS shell to get the
+    #               inner SFX, then runs InstallShield /a to unpack the
+    #               parent MSI + ~35 sub-MSIs, then runs msiexec /a on
+    #               each sub-MSI to fully unpack the W11x64 / WTx64 /
+    #               WTx86 INF tree. This is the safe, deterministic
+    #               path for AMD 8.x+ installers. See the doc block on
+    #               Expand-AmdInstaller_ViaInstallShield for safety
+    #               analysis and OS variant mapping details.
+    #   Strategy 3: launch installer with /S, watch C:\AMD\ for the
     #               extraction directory, terminate before install runs.
-    #               This is the only reliable path for AMD's modern
-    #               proprietary bootstrapper (8.x+).
+    #               Fragile final fallback retained for installers that
+    #               are neither 7-Zip extractable nor InstallShield-
+    #               based (pre-8.x proprietary formats, hypothetical
+    #               future repackagings, etc.).
     #
     # Removed strategies (and why):
     #   - Bootstrapper extract switches (/layout, /extract:, -extract,
@@ -3664,7 +3692,17 @@ function Expand-AmdInstaller {
     param(
         [Parameter(Mandatory)] [string]$InstallerPath,
         [Parameter(Mandatory)] [string]$DestinationPath,
-        [Parameter(Mandatory)] [string]$SevenZipPath
+        [Parameter(Mandatory)] [string]$SevenZipPath,
+        # r54: Optional OS context. When provided, Strategy 2 emits a
+        # diagnostic summary that highlights whether the AMD source-
+        # variant subdirectory preferred for THIS host OS (W11x64 for
+        # WS2022 / WS2025, WTx64 for WS2016 / WS2019) ended up with
+        # adequate INF coverage post-extraction. The downstream pipeline
+        # (P05 AnalyzeInfs / P06 PatchInfs / I03 InstallDrivers) does
+        # the actual variant filtering and selection via
+        # Get-PreferredAmdSourceVariants / Get-AmdSourceVariant, so this
+        # parameter is purely diagnostic at the extraction layer.
+        $OsContext = $null
     )
 
     function _HasPayload {
@@ -3686,8 +3724,8 @@ function Expand-AmdInstaller {
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    # ---------- Strategy 1/2: 7-Zip auto-detect ----------
-    Write-Host "    Strategy 1/2: 7-Zip auto-detect" -ForegroundColor DarkGray
+    # ---------- Strategy 1/3: 7-Zip auto-detect ----------
+    Write-Host "    Strategy 1/3: 7-Zip auto-detect" -ForegroundColor DarkGray
     & $SevenZipPath x $InstallerPath "-o$DestinationPath" -y -bsp0 -bso0 2>$null | Out-Null
     $exit1 = $LASTEXITCODE
     if ($exit1 -eq 0 -and (_HasPayload $DestinationPath)) {
@@ -3697,11 +3735,107 @@ function Expand-AmdInstaller {
     _ClearDest
     Write-Warn2 "    7-Zip auto-detect produced no usable payload (exit $exit1) - trying next strategy"
 
-    # ---------- Strategy 2/2: launch + watch ----------
-    Write-Host "    Strategy 2/2: launch installer and harvest from C:\AMD\" -ForegroundColor DarkGray
+    # ---------- Strategy 2/3: InstallShield /a admin install (r54) ----------
+    # Dedicated path for AMD 8.x. Bypasses the InstallShield SFX
+    # (ISSetupStream) that 7-Zip cannot decode by invoking
+    # InstallShield's own administrative install mode (/a), then
+    # recursively invokes `msiexec /a` on each sub-MSI to fully unpack
+    # the OS-specific W11x64 / WTx64 / WTx86 INF tree. See
+    # Expand-AmdInstaller_ViaInstallShield for the full doc block.
+    Write-Host "    Strategy 2/3: InstallShield /a admin install (AMD 8.x+ chain)" -ForegroundColor DarkGray
+    try {
+        Expand-AmdInstaller_ViaInstallShield -InstallerPath $InstallerPath `
+                                             -DestinationPath $DestinationPath `
+                                             -SevenZipPath $SevenZipPath `
+                                             -OsContext $OsContext
+        if (_HasPayload $DestinationPath) {
+            Write-Ok "    Extracted via InstallShield admin install chain"
+            return
+        }
+        Write-Warn2 "    InstallShield /a chain completed but produced no usable payload"
+    } catch {
+        Write-Warn2 "    InstallShield /a strategy failed: $($_.Exception.Message)"
+    }
+    _ClearDest
+
+    # ---------- Strategy 3/3: launch + watch (final fallback) ----------
+    Write-Host "    Strategy 3/3: launch installer and harvest from C:\AMD\" -ForegroundColor DarkGray
     Expand-AmdInstaller_ViaLaunch -InstallerPath $InstallerPath -DestinationPath $DestinationPath
     if (-not (_HasPayload $DestinationPath)) {
-        throw "Both extraction strategies failed for $InstallerPath. The installer format may be unsupported by this script. As a workaround, manually extract the installer payload to $DestinationPath (or to C:\AMD\<anything>) and re-run with -OnlyPhases P05+."
+        throw "All three extraction strategies failed for $InstallerPath. The installer format may be unsupported by this script. As a workaround, manually extract the installer payload to $DestinationPath (or to C:\AMD\<anything>) and re-run with -OnlyPhases P05+."
+    }
+}
+
+function Test-RobocopyResult {
+    # r53: Verify that a robocopy (or any other file-copy operation)
+    # produced a destination tree identical to the source tree. Used to
+    # catch silent partial-copy bugs that previously went undetected
+    # (e.g. the PowerShell Copy-Item wildcard quirk fixed in r52).
+    #
+    # Verification levels applied:
+    #   L1: Total file count and total directory count must match
+    #   L2: Relative-path set of all files must match (no missing files,
+    #       no unexpected extras)
+    # Size / hash level verification is intentionally NOT performed:
+    # robocopy /COPY:DAT preserves attributes/timestamps and the L1+L2
+    # check is sufficient signal for our use case. A 1-2 second overhead
+    # against a thousand-file tree on SSD is acceptable.
+    #
+    # Returns a result object; does NOT throw. The caller decides how to
+    # react (throw / warn / retry) based on .Success.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$SourcePath,
+        [Parameter(Mandatory)] [string]$DestinationPath
+    )
+
+    # Recursive enumeration of both trees. -Force includes hidden /
+    # system entries (not expected in the AMD installer payload, but
+    # defensive: a missed hidden file would still be a silent failure).
+    $srcFiles = @(Get-ChildItem -LiteralPath $SourcePath      -Recurse -File      -Force -ErrorAction SilentlyContinue)
+    $srcDirs  = @(Get-ChildItem -LiteralPath $SourcePath      -Recurse -Directory -Force -ErrorAction SilentlyContinue)
+    $dstFiles = @(Get-ChildItem -LiteralPath $DestinationPath -Recurse -File      -Force -ErrorAction SilentlyContinue)
+    $dstDirs  = @(Get-ChildItem -LiteralPath $DestinationPath -Recurse -Directory -Force -ErrorAction SilentlyContinue)
+
+    # ----- L1: count check -----
+    $countMatch = ($srcFiles.Count -eq $dstFiles.Count) -and ($srcDirs.Count -eq $dstDirs.Count)
+
+    # ----- L2: relative-path set check -----
+    # Strip the source / destination root prefix to produce comparable
+    # relative paths, then use a HashSet for O(n) lookup. Where-Object
+    # -notin against a large array would be O(n^2) and noticeably slow
+    # for the graphics installer tree (~10k files in some packages).
+    $srcLen = $SourcePath.TrimEnd('\').Length
+    $dstLen = $DestinationPath.TrimEnd('\').Length
+    $srcRel = $srcFiles | ForEach-Object { $_.FullName.Substring($srcLen).TrimStart('\') }
+    $dstRel = $dstFiles | ForEach-Object { $_.FullName.Substring($dstLen).TrimStart('\') }
+
+    # Case-insensitive comparison: NTFS is normally case-insensitive,
+    # and the AMD installer paths are mixed-case but stable. Treating
+    # 'PACKAGES\IODriver' the same as 'Packages\IODriver' is correct.
+    $dstRelSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $dstRel) { [void]$dstRelSet.Add($p) }
+    $srcRelSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $srcRel) { [void]$srcRelSet.Add($p) }
+
+    $missing = @($srcRel | Where-Object { -not $dstRelSet.Contains($_) })  # in src, not in dst
+    $extra   = @($dstRel | Where-Object { -not $srcRelSet.Contains($_) })  # in dst, not in src
+    $pathsMatch = ($missing.Count -eq 0) -and ($extra.Count -eq 0)
+
+    return [pscustomobject]@{
+        SourcePath      = $SourcePath
+        DestinationPath = $DestinationPath
+        SrcFileCount    = $srcFiles.Count
+        DstFileCount    = $dstFiles.Count
+        SrcDirCount     = $srcDirs.Count
+        DstDirCount     = $dstDirs.Count
+        SrcInfCount     = @($srcFiles | Where-Object Extension -eq '.inf').Count
+        DstInfCount     = @($dstFiles | Where-Object Extension -eq '.inf').Count
+        CountMatch      = $countMatch
+        PathsMatch      = $pathsMatch
+        Success         = $countMatch -and $pathsMatch
+        MissingFiles    = $missing
+        ExtraFiles      = $extra
     }
 }
 
@@ -3885,9 +4019,371 @@ function Expand-AmdInstaller_ViaLaunch {
 
     Write-Host "    Detected extraction at $($newDir.FullName) (waited $([math]::Round($sw.Elapsed.TotalSeconds,1))s, $lastInfCount INFs)" -ForegroundColor DarkGray
 
-    Copy-Item -Path (Join-Path $newDir.FullName '*') `
-              -Destination $DestinationPath -Recurse -Force -ErrorAction SilentlyContinue
+    # r52 fix: replace Copy-Item with robocopy.
+    # The previous code:
+    #   Copy-Item -Path "$src\*" -Destination $dst -Recurse -Force -ErrorAction SilentlyContinue
+    # exhibits a long-standing PowerShell 5.1 quirk: when -Path contains a
+    # trailing wildcard AND -Destination already exists AND -Force is used,
+    # top-level subdirectories are created at the destination but their
+    # contents are NOT always recursively copied. On Windows Server 2025
+    # (build 26100) ja-JP this was reproducibly observed against the AMD
+    # chipset extracted tree: the destination ended up with empty `Logs\`
+    # and `Packages\` directories (timestamped at the Copy-Item moment)
+    # but the deep `Packages\IODriver\<X>\<Y>\W11x64\*.inf` files were
+    # not copied. Combined with -ErrorAction SilentlyContinue, the
+    # silent miss was undetectable from the log. The downstream effect
+    # was that only 4 INFs (extracted later from the 4 top-level MSIs
+    # via the nested-archive expansion step) reached P05, instead of the
+    # expected ~67 INFs that the source tree actually contains.
+    #
+    # robocopy is the right tool for this job because:
+    #   1. Its recursion is unambiguous and reliable across edge cases.
+    #   2. It has built-in lock-retry (/R:n /W:n) for residual handles.
+    #   3. It reports a structured exit code so we can verify success.
+    #   4. It is available on every supported Windows host (no add-on).
+    #
+    # /E         : copy subdirectories, INCLUDING empty ones
+    # /COPY:DAT  : copy Data + Attributes + Timestamps (omit ACLs/owner)
+    # /R:3 /W:2  : 3 retries with 2s wait per attempted-locked-file
+    # /NFL /NDL  : suppress per-file / per-directory log output (noisy)
+    # /NJH /NJS  : suppress the job header / summary footer
+    # /NP        : suppress per-file progress bar (also noisy)
+    # /MT:8      : 8 copy threads (small files speed up significantly)
+    #
+    # robocopy exit codes 0-7 = success/info (no failures); >=8 = error.
+    & robocopy.exe $newDir.FullName $DestinationPath /E /COPY:DAT /R:3 /W:2 `
+        /NFL /NDL /NJH /NJS /NP /MT:8 | Out-Null
+    $robocopyExit = $LASTEXITCODE
+    if ($robocopyExit -ge 8) {
+        throw ("robocopy failed copying '{0}' -> '{1}' with exit code {2}. Robocopy exit codes >= 8 indicate hard failures (access denied, missing source, etc.). Inspect the source and destination manually." -f $newDir.FullName, $DestinationPath, $robocopyExit)
+    }
+
+    # r53: post-copy verification.
+    # Even though robocopy is more reliable than Copy-Item, "external
+    # tool exit code = success" is not a strong enough contract for an
+    # irreversible step in the middle of a long pipeline. We follow up
+    # with an L1+L2 inventory comparison to catch any discrepancy that
+    # the exit code might miss (file system quirks, partial copy due to
+    # permission edge cases, etc.). If the verification fails we throw -
+    # consistent with the rest of P04 (e.g. the "0 INFs" guard below),
+    # because letting P05+ run on an incomplete extract just propagates
+    # the corruption to harder-to-diagnose downstream symptoms.
+    $verify = Test-RobocopyResult -SourcePath $newDir.FullName -DestinationPath $DestinationPath
+    Write-Host ("    Post-copy verification: src/dst files = {0}/{1}, src/dst dirs = {2}/{3}, INFs = {4}/{5}" `
+        -f $verify.SrcFileCount, $verify.DstFileCount,
+            $verify.SrcDirCount,  $verify.DstDirCount,
+            $verify.SrcInfCount,  $verify.DstInfCount) -ForegroundColor DarkGray
+
+    if (-not $verify.Success) {
+        Write-Warn2 ("    robocopy reported exit={0} but post-copy verification FAILED:" -f $robocopyExit)
+        Write-Warn2 ("      file counts (src/dst): {0}/{1}    dir counts (src/dst): {2}/{3}" `
+            -f $verify.SrcFileCount, $verify.DstFileCount, $verify.SrcDirCount, $verify.DstDirCount)
+        if ($verify.MissingFiles.Count -gt 0) {
+            Write-Warn2 ("      Missing in destination ({0} file(s); showing first 10):" -f $verify.MissingFiles.Count)
+            $verify.MissingFiles | Select-Object -First 10 | ForEach-Object {
+                Write-Host ("        - $_") -ForegroundColor DarkYellow
+            }
+        }
+        if ($verify.ExtraFiles.Count -gt 0) {
+            Write-Warn2 ("      Unexpected in destination ({0} file(s); showing first 10):" -f $verify.ExtraFiles.Count)
+            $verify.ExtraFiles | Select-Object -First 10 | ForEach-Object {
+                Write-Host ("        - $_") -ForegroundColor DarkYellow
+            }
+        }
+        throw ("Post-robocopy verification failed: src={0} files / dst={1} files, missing={2}, extra={3}. The source tree at '{4}' appears intact; the destination at '{5}' is incomplete. Re-run with -CleanWorkRoot, or inspect both trees manually." `
+            -f $verify.SrcFileCount, $verify.DstFileCount, $verify.MissingFiles.Count, $verify.ExtraFiles.Count, $newDir.FullName, $DestinationPath)
+    }
+
+    Write-Host ("    robocopy result: exit={0}  files copied={1}  INFs copied={2}  [VERIFIED]" `
+        -f $robocopyExit, $verify.DstFileCount, $verify.DstInfCount) -ForegroundColor DarkGray
     Write-Ok "    Extracted via installer self-launch from $($newDir.FullName)"
+}
+
+function Expand-AmdInstaller_ViaInstallShield {
+    # r54: NEW EXTRACTION STRATEGY for AMD Chipset Drivers 8.x and later.
+    #
+    # =====================================================================
+    # WHY THIS STRATEGY EXISTS
+    # =====================================================================
+    # AMD changed their installer architecture starting with version 8.x.
+    # The bootstrapper became a two-layer wrapper that 7-Zip alone cannot
+    # fully unpack:
+    #
+    #   Outer layer:  NSIS self-extracting EXE
+    #                 (7-Zip CAN extract this layer)
+    #                 +-> AMD_Chipset_Drivers.exe (inner installer SFX)
+    #                 +-> auxiliary support files
+    #
+    #   Inner layer:  InstallShield SFX (ISSetupStream format)
+    #                 (7-Zip CANNOT extract - returns exit 2 silently)
+    #                 (Only InstallShield-aware tooling can: /a admin)
+    #                 +-> AMD_Chipset_Drivers.msi   (parent, ARPSYSTEMCOMPONENT=1)
+    #                 +-> Chipset_Software\AMD-GPIO2-Driver.msi (sub)
+    #                 +-> Chipset_Software\AMD-PCI-Driver.msi   (sub)
+    #                 +-> ... (35 sub-MSIs in 8.02.18.557)
+    #
+    #   Sub-MSIs:     Each sub-MSI's File table carries its driver's
+    #                 binaries in three OS-variant subdirectories:
+    #                 +-> Binaries\<DriverName>\W11x64\<driver>.inf
+    #                     (Win11 / WS2022 / WS2025)
+    #                 +-> Binaries\<DriverName>\WTx64 \<driver>.inf
+    #                     (Win10 / WS2019 / WS2016)
+    #                 +-> Binaries\<DriverName>\WTx86 \<driver>.inf
+    #                     (32-bit Windows; never applicable to Server)
+    #                 The parent MSI's admin install does NOT cascade
+    #                 into the sub-MSIs (ISChainPackage is an install-
+    #                 time feature, not extraction-time), so each sub-
+    #                 MSI must be expanded individually via msiexec /a.
+    #
+    # =====================================================================
+    # OS VARIANT MAPPING (informational diagnostic only)
+    # =====================================================================
+    # AMD organizes drivers in three OS-variant subdirectories per driver.
+    # The downstream pipeline (P05 -> P06 -> I03) uses
+    # Get-PreferredAmdSourceVariants -OsContext to decide which variant
+    # to install per host OS:
+    #
+    #   W11x64  -> Windows 11-based Server family
+    #              WS2025 (build 26100) and WS2022 (build 20348).
+    #              Kernel-equivalent to Win11; supports modern features
+    #              (Pluton, PMF AI series, 3D V-Cache optimizer, USB4,
+    #              etc.) only this branch carries.
+    #
+    #   WTx64   -> Windows 10-based Server family
+    #              WS2019 (build 17763) and WS2016 (build 14393).
+    #              Threshold / Redstone ABI; lacks newer-platform
+    #              device coverage; older kernel-compatible builds.
+    #
+    #   WTx86   -> 32-bit Windows; never applicable to Server SKUs.
+    #              We extract it for completeness but P05 skips it on
+    #              all Server hosts.
+    #
+    # This function extracts ALL THREE variants and lets the pipeline
+    # pick. That isolation keeps the extraction format-agnostic: future
+    # host OS changes (e.g. a hypothetical Windows 12 / WS2028) can be
+    # served by updating Get-PreferredAmdSourceVariants alone, without
+    # touching this function.
+    #
+    # =====================================================================
+    # WHY THIS IS SAFE (no drivers installed during extraction)
+    # =====================================================================
+    # Both InstallShield /a and msiexec /a are designed to extract MSI
+    # contents WITHOUT running install-side CustomActions:
+    #
+    #   - /a runs AdminExecuteSequence (limited to file copy and
+    #     property operations).
+    #   - /a does NOT run InstallExecuteSequence (where the
+    #     driver-registration logic lives, e.g. Install_Driver_W11x64
+    #     which calls pnputil /add-driver /install).
+    #
+    # Empirical verification on AMD 8.02.18.557 (Renoir on WS2025):
+    #   - No driver entries appear in Win32_PnPSignedDriver after /a
+    #   - No C:\AMD\ side-effects
+    #   - No sub-installer processes spawn
+    #   - Only files are written to TARGETDIR; nothing executes
+    #
+    # =====================================================================
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$InstallerPath,
+        [Parameter(Mandatory)] [string]$DestinationPath,
+        [Parameter(Mandatory)] [string]$SevenZipPath,
+        # Optional OS context. When provided, the post-extraction summary
+        # highlights whether the AMD source-variant preferred for THIS
+        # host is adequately populated. When not provided, all three
+        # variants are reported neutrally.
+        $OsContext = $null
+    )
+
+    # Staging directories live as siblings of the final destination so
+    # they can be cleaned without touching the result tree if a retry
+    # is needed. We use unique names with an "is-stage-" prefix so we
+    # never collide with the user's intended payload tree.
+    $parentDir = Split-Path $DestinationPath -Parent
+    if ([string]::IsNullOrEmpty($parentDir)) {
+        # Edge case: $DestinationPath is a drive root or similarly
+        # path-less. Fall back to TEMP for staging.
+        $parentDir = [System.IO.Path]::GetTempPath().TrimEnd('\')
+    }
+    $stageNsis = Join-Path $parentDir 'is-stage-nsis'
+    $stageMsi  = Join-Path $parentDir 'is-stage-msi'
+    $isLog     = Join-Path $parentDir 'installshield-admin.log'
+
+    foreach ($d in @($stageNsis, $stageMsi)) {
+        if (Test-Path $d) {
+            Get-ChildItem -LiteralPath $d -Force -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+        }
+    }
+
+    # =====================================================================
+    # Step 1/3: 7-Zip the outer NSIS wrapper into is-stage-nsis
+    # =====================================================================
+    Write-Host "      Step 1/3: 7-Zip outer NSIS shell..." -ForegroundColor DarkGray
+    & $SevenZipPath x $InstallerPath "-o$stageNsis" -y -bsp0 -bso0 2>$null | Out-Null
+    $sevenZipExit = $LASTEXITCODE
+    if ($sevenZipExit -ne 0) {
+        throw "7-Zip failed on outer NSIS shell (exit $sevenZipExit). Path: $InstallerPath"
+    }
+
+    # Locate the inner InstallShield SFX. Standard name in 8.x is
+    # AMD_Chipset_Drivers.exe; fall back to *Chipset*Drivers*.exe to
+    # tolerate future rebrands.
+    $innerExe = @(Get-ChildItem -Path $stageNsis -Recurse -File `
+        -Filter 'AMD_Chipset_Drivers.exe' -ErrorAction SilentlyContinue) |
+        Select-Object -First 1
+    if (-not $innerExe) {
+        $innerExe = @(Get-ChildItem -Path $stageNsis -Recurse -File `
+            -Filter '*Chipset*Drivers*.exe' -ErrorAction SilentlyContinue) |
+            Where-Object { $_.Length -gt 1MB } |
+            Sort-Object Length -Descending | Select-Object -First 1
+    }
+    if (-not $innerExe) {
+        throw "Inner InstallShield SFX (AMD_Chipset_Drivers.exe) not found under $stageNsis. Possible cause: AMD changed the outer-shell layout. Inspect $stageNsis manually."
+    }
+    Write-Host ("      Inner SFX  : {0} ({1:N1} MB)" -f $innerExe.FullName, ($innerExe.Length/1MB)) -ForegroundColor DarkGray
+
+    # =====================================================================
+    # Step 2/3: InstallShield /a admin install of the inner SFX
+    # =====================================================================
+    # Flags passed via /v to the embedded msiexec:
+    #   TARGETDIR        = where to extract (must be quoted)
+    #   GONOGO=PUBLICGO  = AMD-internal "publish-build" feature gate.
+    #                      Without this, the parent MSI rejects /a on
+    #                      some builds with a LaunchCondition violation.
+    #   /qn              = quiet, no UI
+    #   /l*v             = verbose log
+    #
+    # Argument-passing note: PowerShell's native-call argument parsing
+    # mangles embedded double-quotes in some configurations. We use
+    # backtick-escaped quotes inside a single PowerShell string so the
+    # literal /v"..." structure reaches CreateProcess intact. This
+    # pattern is verified to work against InstallShield SFX builds
+    # 2020-2025.
+    Write-Host "      Step 2/3: InstallShield /a admin install..." -ForegroundColor DarkGray
+    $innerExePath = $innerExe.FullName
+
+    & $innerExePath /a /s "/v`"TARGETDIR=`"$stageMsi`" GONOGO=`"PUBLICGO`" /qn /l*v `"$isLog`"`"" 2>$null | Out-Null
+    $installShieldExit = $LASTEXITCODE
+
+    # We do not throw on a non-zero InstallShield exit: some IS releases
+    # return exit 1 even on successful extraction (typically when the
+    # AdminUISequence has a trivial validation step). The authoritative
+    # success signal is the presence of MSI files under $stageMsi.
+    $msiFiles = @(Get-ChildItem -Path $stageMsi -Recurse -File -Filter '*.msi' -ErrorAction SilentlyContinue)
+    if ($msiFiles.Count -lt 2) {
+        throw "InstallShield /a produced only $($msiFiles.Count) MSI(s) under $stageMsi (expected >=2: 1 parent + N sub). InstallShield exit was $installShieldExit. See log: $isLog"
+    }
+    Write-Host ("      Unpacked   : {0} MSI files (InstallShield exit {1})" -f $msiFiles.Count, $installShieldExit) -ForegroundColor DarkGray
+
+    # =====================================================================
+    # Step 3/3: Recursive msiexec /a on each sub-MSI
+    # =====================================================================
+    # Each sub-MSI's admin install unpacks its INF tree into
+    # DestinationPath\<RELATIVE_TARGETDIR_TREE>. We pass the SAME
+    # TARGETDIR for every sub-MSI (DestinationPath itself), so all
+    # sub-MSIs share the same tree. The MSIs are authored with
+    # INSTALLDIR relative to TARGETDIR via the
+    # [TARGETDIR]AMD\Chipset_Software\Binaries\<DriverName>\<OS>    # property chain, so a single TARGETDIR collapses everything
+    # into one flat W11x64 / WTx64 / WTx86 tree.
+    Write-Host ("      Step 3/3: msiexec /a on {0} sub-MSI(s)..." -f $msiFiles.Count) -ForegroundColor DarkGray
+
+    # Always start from a clean DestinationPath
+    if (Test-Path $DestinationPath) {
+        Get-ChildItem -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+    }
+
+    $subSuccess = 0
+    $subFail    = 0
+    foreach ($msi in $msiFiles) {
+        $subLog = Join-Path $parentDir ("msiexec-admin-" + [System.IO.Path]::GetFileNameWithoutExtension($msi.Name) + ".log")
+        $subArgs = @(
+            '/a', ('"{0}"' -f $msi.FullName),
+            ('TARGETDIR="{0}"' -f $DestinationPath),
+            '/qn',
+            '/l*v', ('"{0}"' -f $subLog)
+        )
+        $sub = Start-Process -FilePath 'msiexec.exe' -ArgumentList $subArgs `
+                              -PassThru -Wait -WindowStyle Hidden
+        if ($sub.ExitCode -eq 0) {
+            $subSuccess++
+        } else {
+            $subFail++
+            Write-Host ("        sub-MSI exit {0}: {1} (log: {2})" -f $sub.ExitCode, $msi.Name, $subLog) -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ("      msiexec /a : {0} succeeded, {1} failed" -f $subSuccess, $subFail) -ForegroundColor DarkGray
+
+    if ($subSuccess -eq 0) {
+        throw "All $($msiFiles.Count) sub-MSI admin installs failed. Inspect logs in $parentDir\msiexec-admin-*.log"
+    }
+
+    # =====================================================================
+    # Post-extraction summary by OS variant
+    # =====================================================================
+    # Enumerate INFs in DestinationPath and bucket them by source
+    # variant (W11x64 / WTx64 / WTx86 / Unknown). This uses the same
+    # Get-AmdSourceVariant classifier the P05 / P06 / I03 pipeline uses,
+    # so the numbers reported here predict what those phases will see.
+    $allInfs = @(Get-ChildItem -Path $DestinationPath -Recurse -File -Filter '*.inf' -ErrorAction SilentlyContinue)
+    Write-Host ('      INF total  : {0}' -f $allInfs.Count) -ForegroundColor DarkGray
+
+    if ($allInfs.Count -gt 0) {
+        $byVariant = $allInfs |
+            ForEach-Object {
+                $rel = $_.FullName.Substring($DestinationPath.TrimEnd('\').Length).TrimStart('\')
+                $variant = if (Get-Command Get-AmdSourceVariant -ErrorAction SilentlyContinue) {
+                    Get-AmdSourceVariant -RelativePath $rel
+                } else { 'Unknown' }
+                [pscustomobject]@{ Variant = $variant; Rel = $rel }
+            } |
+            Group-Object Variant |
+            Sort-Object Name
+
+        # Determine the variant(s) preferred for the host OS, if context provided.
+        $preferred = @()
+        if ($OsContext -and (Get-Command Get-PreferredAmdSourceVariants -ErrorAction SilentlyContinue)) {
+            try {
+                $preferred = @(Get-PreferredAmdSourceVariants -OsContext $OsContext)
+            } catch {
+                $preferred = @()
+            }
+        }
+
+        foreach ($g in $byVariant) {
+            $isPreferred = $preferred -contains $g.Name
+            $marker = if ($isPreferred) { '[PREFERRED]' } elseif ($preferred.Count -eq 0) { '[ unknown ]' } else { '[ skip    ]' }
+            $color  = if ($isPreferred) { 'Green' } else { 'DarkGray' }
+            Write-Host ('      {0} {1,-10} : {2,3} INF(s)' -f $marker, $g.Name, $g.Count) -ForegroundColor $color
+        }
+
+        # Sanity check: if we know the preferred variant and it has 0
+        # INFs, the extraction is "successful" (Strategy 1 _HasPayload
+        # passes) but useless for this host. Warn loudly.
+        if ($preferred.Count -gt 0) {
+            foreach ($p in $preferred) {
+                $count = ($byVariant | Where-Object Name -eq $p | Select-Object -ExpandProperty Count -ErrorAction SilentlyContinue)
+                if (-not $count) { $count = 0 }
+                if ($count -eq 0) {
+                    Write-Warn2 ("      No INFs in preferred variant '{0}' for host OS. Downstream P05/P06/I03 will have nothing to install." -f $p)
+                }
+            }
+        }
+    }
+
+    # =====================================================================
+    # Cleanup staging directories (keep logs for postmortem)
+    # =====================================================================
+    foreach ($d in @($stageNsis, $stageMsi)) {
+        if (Test-Path $d) {
+            Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 #####################################################################
@@ -4546,6 +5042,29 @@ function Invoke-PrepPhase02_AcquireTools {
     Write-Host "    WDK build    : $($Ctx.Os.WdkBuild)"
     Write-Host "    Notes        : $($Ctx.Os.ToolkitNotes)"
 
+    # r51: On a clean-installed host the SDK and WDK packages are
+    # absent and must be downloaded via winget. The bootstrap EXEs
+    # (winsdksetup.exe / wdksetup.exe) are ~1.3 MB each but the
+    # background payloads they pull from Microsoft Download CDN are
+    # several hundred MB to multi-GB; the install typically takes
+    # ~5 min for the SDK and ~3 min for the WDK on a typical
+    # connection in JP (total P02 elapsed ~8-10 min). On subsequent
+    # runs in the same workspace, the P02 PhaseMarker is hit and
+    # this whole block is skipped in ~2 s. We surface this once,
+    # up-front, so the user is not surprised by the long pause.
+    $needsSdk = (-not $signtool) -and $Ctx.Os.WingetSdkId
+    $needsWdk = (-not $inf2cat)  -and $Ctx.Os.WingetWdkId
+    if ($needsSdk -or $needsWdk) {
+        $missing = @()
+        if ($needsSdk) { $missing += 'Windows SDK (~5 min)' }
+        if ($needsWdk) { $missing += 'Windows WDK (~3 min)' }
+        Write-Warn2 ('First-run install required for: {0}.' -f ($missing -join ', '))
+        Write-Host  '       Bootstrap EXEs are small (~1-2 MB) but each fetches several hundred MB'  -ForegroundColor DarkYellow
+        Write-Host  '       to multi-GB of background payload from Microsoft Download CDN.'         -ForegroundColor DarkYellow
+        Write-Host  '       Expected P02 elapsed on a clean host (JP): ~8-10 minutes.'              -ForegroundColor DarkYellow
+        Write-Host  '       Subsequent runs in the same workspace will skip P02 (PhaseMarker hit).' -ForegroundColor DarkGray
+    }
+
     $wingetWorks = (Test-WingetWorking) -and $Ctx.Os.CanInstallWinget
     if ($wingetWorks -and $Ctx.Os.WingetSdkId -and -not $signtool) {
         Write-Step "Windows SDK: winget ($($Ctx.Os.WingetSdkId))"
@@ -4750,20 +5269,55 @@ function Invoke-PrepPhase04_ExtractInstaller {
     }
 
     Write-Step 'Extracting installer (multiple strategies will be attempted)'
+    # r54: pass OS context so Strategy 2 (InstallShield /a) can emit a
+    # variant-aware post-extraction diagnostic showing whether the
+    # W11x64 / WTx64 / WTx86 INF coverage matches the host OS expectations.
     Expand-AmdInstaller -InstallerPath $Ctx.Installer `
                         -DestinationPath $Ctx.Paths.Extract `
-                        -SevenZipPath $Ctx.SevenZip
+                        -SevenZipPath $Ctx.SevenZip `
+                        -OsContext $Ctx.Os
     Write-Ok "Extracted to: $($Ctx.Paths.Extract)"
 
     # Nested archives - covers MSIs/CABs from /layout, sub-installers
     # extracted by Strategy 3, etc.
+    #
+    # r53: previously this loop called 7-Zip with `2>$null | Out-Null`,
+    # which silently swallowed any error. A corrupt or password-locked
+    # nested archive would extract zero files and produce no visible
+    # failure, mirroring the silent-fail pattern that bit us with
+    # Copy-Item in pre-r52. We now capture $LASTEXITCODE and verify
+    # that at least one file emerged. Exit codes for 7-Zip:
+    #   0     = success
+    #   1     = warning (non-fatal, e.g. some files locked but rest OK)
+    #   2     = fatal error (corrupt archive, unsupported format, etc.)
+    #   7     = command-line error
+    #   8     = memory allocation failure
+    #   255   = user interrupted
+    # We treat exit <= 1 as acceptable and >= 2 as hard failure.
     $nested = Get-ChildItem -Path $Ctx.Paths.Extract -Recurse -Include *.msi,*.cab,*.7z,*.zip -ErrorAction SilentlyContinue
     foreach ($n in $nested) {
         $dest = Join-Path $n.DirectoryName ($n.BaseName + '__contents')
         if (Test-Path $dest) { continue }
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
         Write-Host "    Nested: $($n.Name)" -ForegroundColor DarkCyan
-        & $Ctx.SevenZip x $n.FullName "-o$dest" -y -bsp0 -bso0 2>$null | Out-Null
+
+        & $Ctx.SevenZip x $n.FullName "-o$dest" -y -bsp0 -bso0 2>&1 | Out-Null
+        $sevenZipExit = $LASTEXITCODE
+        if ($sevenZipExit -ge 2) {
+            throw ("7-Zip failed to extract nested archive '{0}' (exit={1}). Common causes: corrupt archive, password-protected payload, or unsupported nested format. Inspect '{2}' manually, or re-run with -CleanWorkRoot to fetch a fresh installer." -f $n.FullName, $sevenZipExit, $dest)
+        }
+
+        # 0 files extracted is suspicious but not always fatal: some
+        # nested MSIs are metadata-only and legitimately produce no
+        # payload. We log it but defer the final decision to the
+        # downstream "0 INFs" guard, which catches the cases that
+        # actually matter for the pipeline.
+        $extractedCount = @(Get-ChildItem -LiteralPath $dest -Recurse -File -Force -ErrorAction SilentlyContinue).Count
+        if ($extractedCount -eq 0) {
+            Write-Warn2 ("      7-Zip exit={0} but 0 files extracted from {1} - flagged for downstream INF-count check" -f $sevenZipExit, $n.Name)
+        } else {
+            Write-Host ("      -> exit={0}, {1} file(s) extracted" -f $sevenZipExit, $extractedCount) -ForegroundColor DarkGray
+        }
     }
 
     # Final verification: after all extraction and nested expansion,

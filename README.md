@@ -938,3 +938,18 @@ The MIT licence applies to the **PowerShell scripts and accompanying documentati
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for issue templates, PR guidelines, and how to run the regression test suite (including `psa.py`).
 
 Issues and pull requests are tracked at: <https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer>
+
+---
+
+## r54+ — AMD Chipset Software 8.x extraction support
+
+Starting with the Chipset script's r54 revision, the P04 ExtractInstaller phase supports AMD's new two-layer installer architecture used in Chipset Software 8.x (8.02.18.557 and later). The installer wraps an InstallShield SFX inside an NSIS shell that 7-Zip alone cannot fully unpack; r54 adds a dedicated `InstallShield /a + recursive msiexec /a` strategy that handles the format end-to-end.
+
+The new extraction emits a per-OS-variant INF coverage diagnostic so operators can confirm the right driver subdirectory was unpacked for their host OS:
+
+| Host OS family | Preferred INF subdirectory |
+| --- | --- |
+| Windows Server 2025 / 2022 (Windows 11-based) | `W11x64\` |
+| Windows Server 2019 / 2016 (Windows 10-based) | `WTx64\` |
+
+For the full architecture (two-layer wrapper, 35 sub-MSIs, AMD's actual driver-registration logic via `pnputil`), see [SPEC.md §B.1 "AMD 8.x installer architecture (r54+)"](SPEC.md#amd-8x-installer-architecture-r54). For the regression test of this extraction path, see [TESTING.md §8 "r54+ — AMD Chipset Software 8.x extraction diagnostic format"](TESTING.md#8-r54--amd-chipset-software-8x-extraction-diagnostic-format).

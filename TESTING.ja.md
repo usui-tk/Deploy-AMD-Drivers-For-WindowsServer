@@ -912,3 +912,78 @@ jobs:
 self-hosted runner を on-demand で起動・停止するスケジューラ (例: AWS Lambda + SSM) と組み合わせれば、月額 $5〜10 程度に収まります。ワークフローは PrepareVerify で停止し Install は試行しません (EPYC マシンにはコンシューマー Ryzen / NPU ハードウェアが存在しないため)。
 
 > **将来**: 物理 NPU マシンが入手可能となった時点で、専用 self-hosted runner (Ryzen AI 9 HX 370 mini-PC 等) で `-Action Install` を実行する CI ジョブを追加可能。それまでは NPU スクリプトの `-Action Install` は NPU ハードウェアを所有する operator が手動で実行し、結果を GitHub Issues 経由で報告する必要があります。
+
+---
+
+## 8. r54+ — AMD Chipset Software 8.x 展開診断フォーマット
+
+Chipset スクリプト r54 リビジョン以降、 P04 ExtractInstaller phase は AMD Chipset Software 8.x (8.02.18.557 以降) 向けに新しい "Strategy 2/3" パスを含む。 本章は新しい展開パスの期待される診断出力と検証手順を記載する。
+
+### 5.1 新しい strategy が必要となった理由
+
+AMD Chipset Software 8.x は 2 層構造の wrapper として配布される:
+
+1. **外殻 (Outer layer)**: NSIS 自己展開 EXE (7-Zip で展開可能)。
+2. **内殻 (Inner layer)**: `ISSetupStream` フォーマットの InstallShield SFX (7-Zip では展開不可、 InstallShield 自身の `/a` 管理者インストールのみで展開可能)。
+
+r54 以前のリビジョンは内殻での 7-Zip 失敗を検知してインストーラを起動し `C:\AMD\` から file を回収する fallback に流れていたが、 AMD はこのディレクトリを積極的にクリーンアップするため脆弱だった。 r54 は旧 7-Zip 戦略と launch-watch fallback の間に専用の InstallShield-aware strategy を挿入する。
+
+完全なアーキテクチャは `SPEC.ja.md` §B.1 "AMD 8.x インストーラアーキテクチャ (r54+)" を参照。
+
+### 5.2 Strategy 2 が成功した場合に期待される診断出力
+
+インストーラが AMD 8.x である場合、 P04 console output は以下のような形式となる（可読性のため省略）:
+
+```
+[*] Phase 04 :  P04 ExtractInstaller   (Build group)
+[*] Extracting installer (multiple strategies will be attempted)
+    Strategy 1/3: 7-Zip auto-detect
+[!] 7-Zip auto-detect produced no usable payload (exit 0) - trying next strategy
+    Strategy 2/3: InstallShield /a admin install (AMD 8.x+ chain)
+      Step 1/3: 7-Zip outer NSIS shell...
+      Inner SFX  : C:\AMD-Chipset-WS\is-stage-nsis\AMD_Chipset_Drivers.exe (75.3 MB)
+      Step 2/3: InstallShield /a admin install...
+      Unpacked   : 36 MSI files (InstallShield exit 0)
+      Step 3/3: msiexec /a on 36 sub-MSI(s)...
+      msiexec /a : 35 succeeded, 1 failed
+      INF total  : 96
+      [PREFERRED] W11x64    :  32 INF(s)
+      [ skip    ] WTx64     :  32 INF(s)
+      [ skip    ] WTx86     :  32 INF(s)
+[+]    Extracted via InstallShield admin install chain
+[+] Extracted to: C:\AMD-Chipset-WS\extract
+```
+
+### 5.3 検証チェックリスト
+
+新しいパスが正常に動作した場合、以下のすべてが成立すべきである:
+
+| チェック項目 | 期待値 | 検証方法 |
+| --- | --- | --- |
+| InstallShield exit code | `0` (理想) または `1` (MSI count が正しければ許容) | console 行 `Unpacked   : NN MSI files (InstallShield exit X)` |
+| MSI count | `>= 36` (8.02.18.557 では parent 1 + sub 35。 将来バージョンで差異あり) | 同上 |
+| msiexec /a 成功率 | `36` 中 `>= 30` | console 行 `msiexec /a : NN succeeded, M failed` |
+| INF total | `>= 80` (バージョンにより変動、 8.02.18.557 では通常 96) | console 行 `INF total  : NN` |
+| PREFERRED variant が非ゼロの INF を持つ | `[PREFERRED] <variant> : >= 25 INF(s)` | console 行 — **これが critical signal** |
+| PREFERRED variant が host OS と一致 | WS2022/WS2025 では `W11x64`、 WS2016/WS2019 では `WTx64` | console banner の `$Ctx.Os` とクロスチェック |
+
+### 5.4 トラブルシューティング
+
+PREFERRED variant が `0 INF(s)` を示す一方で展開自体は成功している場合、考えられる原因は:
+
+1. **InstallShield /a が silent に失敗**: `C:\AMD-Chipset-WS\installshield-admin.log` の admin install 時の MSI error を確認。 `Action ended ...` 行で非ゼロの return value を探す。
+
+2. **OS-variant sub-MSI に対する msiexec /a が失敗**: `C:\AMD-Chipset-WS\msiexec-admin-*.log` で具体的な失敗 sub-MSI を確認。 各 sub-MSI は MSI ファイル名にちなんだ独自の log を持つ。
+
+3. **AMD が将来バージョンでディレクトリレイアウトを変更**: 8.02.18.557 より新しい Chipset Software に対して実行し、 `Binaries\<DriverName>\<OS>\` 構造が変わった場合は、 `Get-AmdSourceVariant` 分類器 (script の ~5003 行目) の更新が必要となる可能性がある。 `C:\AMD-Chipset-WS\extract\` 配下のディレクトリツリーを添えて GitHub issue を起票してほしい。
+
+### 5.5 Fallback 動作
+
+何らかの理由で Strategy 2 が失敗した場合 (`Expand-AmdInstaller` の `try { ... } catch` ブロックで捕捉)、 スクリプトは Strategy 3/3 (launch + watch) に流れる。 これは r54 以前の動作を保持するためである。 その場合の console output は:
+
+```
+[!] InstallShield /a strategy failed: <error message>
+    Strategy 3/3: launch installer and harvest from C:\AMD\
+```
+
+これは r54 以前のリビジョンが使用していたのと同じ fallback パスであり、 regression fallback として扱うべきである。
