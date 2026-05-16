@@ -361,7 +361,7 @@ try {
 
 # Compact one-line tag used in places where space is limited (per-phase
 # headers). Format: "v2026.05.09-r10/a1b2c3d4e5f6"
-$Script:ScriptShortTag = ('v{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
+$Script:ScriptShortTag = ('{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
 
 #####################################################################
 # SECTION 0.5: WDAC supplemental policy GUID configuration (r48+)
@@ -5854,25 +5854,25 @@ function Invoke-InstPhase02_AuthorizeDriverSigning {
         $existing = Test-MsBthPanWdacPolicyDeployed -Ctx $Ctx
         if ($existing -and -not $Ctx.Force) {
             Write-Skip ('WDAC supplemental policy is already deployed (PolicyId={0}).' -f $existing.PolicyId)
-            Write-Host '  Self-signed AMD drivers are already authorized. No further action needed.' -ForegroundColor Green
+            Write-Host '  Self-signed BthPan driver is already authorized. No further action needed.' -ForegroundColor Green
             Write-PhaseFooter 'I02' 'cached'
             return
         }
         if ($existing -and $Ctx.Force) {
-            Write-Step ('Removing existing AMD supplemental policy {0} (because -Force)...' -f $existing.PolicyId)
+            Write-Step ('Removing existing BthPan supplemental policy {0} (because -Force)...' -f $existing.PolicyId)
             $rm = Uninstall-MsBthPanWdacPolicy -PolicyId $existing.PolicyId
             if ($rm.Removed) { Write-Ok 'Old policy removed.' } else { Write-Warn2 'Could not remove old policy; proceeding anyway.' }
         }
 
         # Need the .cer (P07 product). Allow -Force to skip the check.
-        $cer = if ($Ctx.CertCerPath) { $Ctx.CertCerPath } else { Join-Path $Ctx.Paths.Cert 'AMD-Chipset-Driver-CodeSign.cer' }
+        $cer = if ($Ctx.CertCerPath) { $Ctx.CertCerPath } else { Join-Path $Ctx.Paths.Cert 'MS-BthPan-Driver-CodeSign.cer' }
         if (-not (Test-Path $cer)) {
             throw "I02: cert file not found at $cer - run P07 (CreateCertificate) first."
         }
 
         # Build supplemental policy XML
-        $xmlPath = Join-Path $Ctx.Paths.Cert 'AmdSelfSignedSupplementalPolicy.xml'
-        $cipPath = Join-Path $Ctx.Paths.Cert 'AmdSelfSignedSupplementalPolicy.cip'
+        $xmlPath = Join-Path $Ctx.Paths.Cert 'MsBthPanSelfSignedSupplementalPolicy.xml'
+        $cipPath = Join-Path $Ctx.Paths.Cert 'MsBthPanSelfSignedSupplementalPolicy.cip'
         Write-Step "Building WDAC supplemental policy XML..."
         $policyId = New-MsBthPanDriverWdacSupplementalPolicy -CerPath $cer -OutputXml $xmlPath
         Write-Ok ('Supplemental policy XML written: {0}' -f $xmlPath)
@@ -5916,7 +5916,7 @@ function Invoke-InstPhase02_AuthorizeDriverSigning {
         # Write-Detail (SPEC A.5). The two CiTool.exe command strings
         # below stay at column 4 visually but go through the helper.
         Write-Detail 'Reversal (when you are done with this lab):' -Color DarkGray
-        Write-Detail ('  .\Deploy-AMDChipsetDriverOnWindowsServer.ps1 -Action Cleanup') -Color DarkGray
+        Write-Detail ('  .\Deploy-MSBthPanInboxOnWindowsServer.ps1 -Action Cleanup') -Color DarkGray
         Write-Detail ('  or: CiTool.exe --remove-policy {0}' -f $policyId) -Color DarkGray
 
         $reverseInstr = @(

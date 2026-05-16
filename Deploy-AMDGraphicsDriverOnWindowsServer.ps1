@@ -720,7 +720,7 @@ try {
 
 # Compact one-line tag used in places where space is limited (per-phase
 # headers). Format: "v2026.05.09-r10/a1b2c3d4e5f6"
-$Script:ScriptShortTag = ('v{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
+$Script:ScriptShortTag = ('{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
 
 #####################################################################
 # SECTION 0.5: WDAC supplemental policy GUID configuration (r17+)

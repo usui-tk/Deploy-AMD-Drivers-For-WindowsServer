@@ -716,7 +716,7 @@ CiTool --list-policies --json | ConvertFrom-Json |
 
 ## 6. UEFI Secure Boot ベースライン検証チェックリスト
 
-UEFI Secure Boot ベースライン機能 (Chipset r50 / Graphics r19 / NPU r5) の各スクリプト共通検証チェックリスト。 3 つの姉妹スクリプトは 6 コア関数を共有するため、 期待出力は 3 スクリプト間で統一されている。 KB5089549 同等のパッチが適用された Windows Server 2025 ホストで少なくとも 1 回は検証すること。
+UEFI Secure Boot ベースライン機能 (Chipset r50 / Graphics r19 / NPU r5 / BthPan r1) の各スクリプト共通検証チェックリスト。 4 つの姉妹スクリプトは 6 コア関数を共有するため、 期待出力は 4 スクリプト間で統一されている。 KB5089549 同等のパッチが適用された Windows Server 2025 ホストで少なくとも 1 回は検証すること。
 
 ### Phase 別の期待出力
 
@@ -752,7 +752,7 @@ UEFI Secure Boot ベースライン機能 (Chipset r50 / Graphics r19 / NPU r5) 
 
 ### スクリプト間整合性チェック
 
-同じホストで `-CleanWorkRoot` 付きで 3 スクリプトすべてを PrepareVerify モードで実行。 V06 でキャプチャされる `BucketId`、 `Confidence`、 イベントカウントは **3 スクリプト間で同一** になるべき (MS サンプルスクリプトは同じホスト状態に対して決定論的な結果を返す)。
+同じホストで `-CleanWorkRoot` 付きで 4 スクリプトすべてを PrepareVerify モードで実行。 V06 でキャプチャされる `BucketId`、 `Confidence`、 イベントカウントは **4 スクリプト間で同一** になるべき (MS サンプルスクリプトは同じホスト状態に対して決定論的な結果を返す)。
 
 ---
 

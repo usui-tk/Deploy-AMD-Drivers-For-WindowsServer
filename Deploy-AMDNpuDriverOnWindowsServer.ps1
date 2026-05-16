@@ -326,7 +326,7 @@ try {
 } catch {
     $Script:ScriptHash = '(hash-error)'
 }
-$Script:ScriptShortTag = ('v{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
+$Script:ScriptShortTag = ('{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
 
 # Phase registry (sister-script-aligned: pscustomobject + Invoke-{Group}Phase{NN}_{Name})
 $Script:PhaseRegistry = @(

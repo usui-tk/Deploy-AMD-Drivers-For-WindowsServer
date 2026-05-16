@@ -569,6 +569,7 @@ $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD アカウント
 | `cert\AMD-Chipset-Driver-CodeSign.cer` (Chipset) / `cert\AMD-Graphics-Driver-CodeSign.cer` (Graphics) / `cert\AMD-NPU-Driver-CodeSign.cer` (NPU) | 公開証明書 (CER 形式、 trust-store import 用)   |
 | `cert\AmdSuppPolicyId.txt` (Chipset/Graphics) | 動的に生成された WDAC supplemental PolicyId をクリーンアップ用に記録するマーカーファイル                       |
 | `cert\WDAC-Supplemental-NPU.xml` / `.cip` (NPU) | WDAC 補助 Code Integrity policy (XML ソース + バイナリ、 `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\` に deploy) |
+| `cert\MsBthPanSelfSignedSupplementalPolicy.xml` / `.cip` (BthPan) | BthPan 用 WDAC 補助 Code Integrity policy (XML ソース + バイナリ、 `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\` に deploy)。 BthPan 固有 GUID `A6E72D4F-3B98-4C5A-9E1D-7F8B2A4C6E5D` を使用。 |
 | `inf_inventory.csv`                          | P05 で生成される INF 単位 inventory (ファイル名、 provider、 class、 HWID 数、 decoration ステータス等)        |
 | `inf_inventory_report.txt`                   | P05 INF 解析の人間可読サマリ                                                                                  |
 
@@ -665,7 +666,7 @@ detect_stdout_extracted.json       - パース済みJSONオブジェクト (Buck
 
 ========================================================================
  PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
- script: vnpu-2026.05.10-r2/09129eebb04b
+ script: npu-2026.05.10-r2/09129eebb04b
 ========================================================================
 [14:23:05]            [*] Running environment and sanity checks
 [14:23:05]            [+] Administrator privileges confirmed.

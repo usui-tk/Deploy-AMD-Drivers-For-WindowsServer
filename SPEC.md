@@ -191,7 +191,7 @@ try {
 } catch {
     $Script:ScriptHash = '(hash-error)'
 }
-$Script:ScriptShortTag = ('v{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
+$Script:ScriptShortTag = ('{0}/{1}' -f $Script:ScriptVersion, $Script:ScriptHash)
 ```
 
 ### Main entry banner
@@ -214,7 +214,7 @@ Emitted by the dispatcher (`Invoke-PhaseRunner`), **never** by phase functions:
 ```
 ========================================================================
  PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
- script: vnpu-2026.05.10-r2/09129eebb04b
+ script: npu-2026.05.10-r2/09129eebb04b
 ========================================================================
 ... phase body output ...
  PHASE P00 -> DONE     elapsed: 0.45s
@@ -758,7 +758,7 @@ A cross-cutting feature introduced to give operators consistent insight into the
 
 ### Function set (7 functions, 6 cross-script-identical + 1 per-script helper)
 
-The first six functions are **byte-identical** across the chipset / graphics / NPU scripts so they can be lifted verbatim from any sister and pasted into a new one:
+The first six functions are **byte-identical** across the chipset / graphics / NPU / BthPan scripts so they can be lifted verbatim from any sister and pasted into a new one:
 
 | Function | Role |
 |---|---|
@@ -1098,6 +1098,8 @@ Compatibility evaluation is a **separate** axis (`Test-NpuDriverRaiCompatibility
 - **Default workspace**: `C:\MSBthPan-WS`
 - **Cert subject CN**: `Microsoft BthPan Driver Self-Sign (<OsCode> Lab, At Own Risk)` (where `<OsCode>` is `WS2016` / `WS2019` / `WS2022` / `WS2025` depending on the host)
 - **Cert filename**: `MS-BthPan-Driver-CodeSign.{pfx,cer}`
+- **WDAC supplemental policy XML/CIP filenames**: `MsBthPanSelfSignedSupplementalPolicy.{xml,cip}` (stored in `<workspace>\cert\`)
+- **WDAC supplemental policy marker file**: `cert\MsBthPanSuppPolicyId.txt` (records the deployed PolicyId for Cleanup)
 - **WDAC supplemental policy GUID** (default, fixed): `A6E72D4F-3B98-4C5A-9E1D-7F8B2A4C6E5D` — newly minted for this script, does not collide with the Chipset (`503860EA-…`), Graphics (`85336828-…`), or NPU (`8B2C4F12-…`) scripts.
 - **WDAC supplemental policy name**: `MS-BthPan-Driver-SelfSign-Lab`
 
@@ -1383,7 +1385,7 @@ This had two downsides:
 | Chipset r49 (during validation) | Three corrective fixes applied before publishing: (a) `schtasks.exe /Query /FO CSV` returns localized headers on ja-JP hosts; replaced with `Get-ScheduledTask` for locale-independent state. (b) MS sample script's `[<>:"|?*]` regex rejects every absolute Windows path; added stdout-JSON fallback. (c) `Show-...` non-compact mode and V06 caller both printed `--- UEFI Secure Boot Baseline ---` banner; removed inner banner so V06 controls section numbering. |
 | Chipset r50 / Graphics r19 / NPU r4→r5 | Polish patch: removed `%TEMP%` fallback from P00 (diagnostic files always co-locate with `$Ctx.WorkRoot`); added `Get-OrEnsureSecureBootBaseline` helper that re-captures when the cached snapshot's diagnostic file is missing or outside the current workspace. |
 
-**Cross-script symmetry**: The 6 core functions (Get-SecureBootCertificateInventory / Get-MsSecureBootExampleScriptPath / Invoke-MsSecureBootDetectScript / Get-SecureBootBaselineSnapshot / Show-SecureBootBaselineSnapshot / Format-SecureBootBaselineForReport) are byte-identical across the three scripts. Only the seventh `Get-OrEnsureSecureBootBaseline` helper differs (chipset/graphics: `param($Ctx)`; NPU: `param()` with script-scope access).
+**Cross-script symmetry**: The 6 core functions (Get-SecureBootCertificateInventory / Get-MsSecureBootExampleScriptPath / Invoke-MsSecureBootDetectScript / Get-SecureBootBaselineSnapshot / Show-SecureBootBaselineSnapshot / Format-SecureBootBaselineForReport) are byte-identical across the four scripts (chipset / graphics / NPU / BthPan); BthPan reuses the chipset variant verbatim. Only the seventh `Get-OrEnsureSecureBootBaseline` helper differs (chipset/graphics: `param($Ctx)`; NPU: `param()` with script-scope access).
 
 ---
 

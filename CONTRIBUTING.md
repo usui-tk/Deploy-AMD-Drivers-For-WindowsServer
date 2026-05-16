@@ -86,7 +86,7 @@ Minimum smoke test:
 python3 psa.py Deploy-AMDChipsetDriverOnWindowsServer.ps1
 python3 psa.py Deploy-AMDGraphicsDriverOnWindowsServer.ps1
 python3 psa.py Deploy-AMDNpuDriverOnWindowsServer.ps1
-# Expected: 0 errors on all three; warnings/info must match SPEC §A.11.5 baseline.
+# Expected: 0 errors on all four; warnings/info must match SPEC §A.11.5 baseline.
 
 # 2. PrepareVerify on a Windows test host with the target AMD consumer devices
 .\Deploy-AMDChipsetDriverOnWindowsServer.ps1  -Action PrepareVerify -CleanWorkRoot

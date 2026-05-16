@@ -584,6 +584,7 @@ Each script writes the following artifacts under its workspace (`C:\AMD-{Chipset
 | `cert\AMD-Chipset-Driver-CodeSign.cer` (chipset) / `cert\AMD-Graphics-Driver-CodeSign.cer` (graphics) / `cert\AMD-NPU-Driver-CodeSign.cer` (NPU) / `cert\MS-BthPan-Driver-CodeSign.cer` (BthPan) | Public certificate (CER format) for trust-store import |
 | `cert\AmdSuppPolicyId.txt` (chipset/graphics) / `cert\MsBthPanSuppPolicyId.txt` (BthPan) | Marker file recording the WDAC supplemental PolicyId for later cleanup                   |
 | `cert\WDAC-Supplemental-NPU.xml` / `.cip` (NPU) | WDAC supplemental Code Integrity policy (XML source + binary deployed to `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\`) |
+| `cert\MsBthPanSelfSignedSupplementalPolicy.xml` / `.cip` (BthPan) | WDAC supplemental Code Integrity policy for BthPan (XML source + binary deployed to `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\`). Uses the BthPan-specific GUID `A6E72D4F-3B98-4C5A-9E1D-7F8B2A4C6E5D`. |
 | `inf_inventory.csv`                         | Per-INF inventory from P05 (file name, provider, class, HWID count, decoration status, etc.). BthPan: single-row CSV |
 | `inf_inventory_report.txt`                  | Human-readable summary of P05 INF analysis (includes UEFI Secure Boot baseline appendix)                          |
 | `logs\inf2cat_bthpan.log` (BthPan) | inf2cat verbose log; useful for diagnosing catalog generation failures                                                |
@@ -683,7 +684,7 @@ Continuation lines that sit inside a section-banner table (PowerShell environmen
 
 ========================================================================
  PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
- script: vnpu-2026.05.10-r2/09129eebb04b
+ script: npu-2026.05.10-r2/09129eebb04b
 ========================================================================
 [14:23:05]            [*] Running environment and sanity checks
 [14:23:05]            [+] Administrator privileges confirmed.
