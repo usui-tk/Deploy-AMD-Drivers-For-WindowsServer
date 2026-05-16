@@ -791,8 +791,54 @@ AMD が新しい Ryzen AI リリースを公開した際、スクリプトを 2 
 | ThinkPad X13 Gen 1 (Win11 24H2) | graphics r14 | r16 / r47 | V05 で「would upgrade 1067/1067 matched device(s)」のような件数膨張。`$matchedDevices` が物理デバイス単位ではなく INF HWID variant 単位で append されていた。物理 DeviceID で重複排除するよう修正。 |
 | ThinkPad X13 Gen 1 (Win11 24H2) | graphics r14 | r16 / r47 | 同バージョン・新日付アップグレードケースで `patched newer (X) than current (X)` という意味不明なメッセージが出ていた。明確化のため `patched same version (X) but newer date; PnP ranking prefers newer-dated driver` 表示に修正。 |
 | パイプラインレビュー (フィールド報告無し) | NPU r1 | (placeholder) | 現時点で発見されたフィールドバグ無し — ただし **フィールド報告自体が存在しない** (NPU スクリプトはまだ物理 NPU ハードウェア上で実行されていない)。 |
+| Lab (Win Server 2025, ja-JP) | chipset r49 (検証中) | r49 公開、 r50 polish | Secure Boot baseline 初版展開時に 3 件補正: (a) `schtasks.exe /FO CSV` ヘッダが ja-JP localized — `Get-ScheduledTask` に置換。 (b) MS サンプルスクリプトの `-OutputPath` バリデータ正規表現が `:` を含む全 Windows 絶対パスを拒否 — stdout JSON 抽出フォールバックを追加。 (c) `Show-...` と V06 呼び出し側がバナーを二重出力 — 内側バナー削除。 |
+| Lab (Win Server 2025, ja-JP) | chipset r49 / graphics r18 / NPU r4 | r50 / r19 / r5 | Polish patch: ワークスペース未作成時に P00 が診断ファイルを `%TEMP%` に書き出し、 `-CleanWorkRoot` ランで stale パスが V06 に表示されていた。 新規 `Get-OrEnsureSecureBootBaseline` helper でワークスペース配下に一貫配置するよう修正。 |
+| Lab (Win Server 2025, ja-JP) | NPU r4 | r5 | `Find-Inf2CatPath` が `\x64\` / `\amd64\` ディレクトリのみフィルタするが、 inf2cat.exe は x86 のみ。 P02 が常に「inf2cat not found」で失敗し winget での WDK インストールも失敗 (WDK は winget パッケージ非提供)。 helper の関数体を x86 対応ツリーウォークに置換。 |
+| Lab (Win Server 2025, ja-JP) | NPU r4 | r5 | `-NpuOverride` の `[ValidateSet]` がデフォルトの空文字列を拒否し、 起動毎にノイジーな警告を出力。 set に `''` を追加。 |
 
 詳細な検証ログと修正コミットは <https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer/commits/main> を参照してください。
+
+---
+
+## 6a. UEFI Secure Boot ベースライン検証チェックリスト
+
+UEFI Secure Boot ベースライン機能 (Chipset r50 / Graphics r19 / NPU r5) の各スクリプト共通検証チェックリスト。 3 つの姉妹スクリプトは 6 コア関数を共有するため、 期待出力は 3 スクリプト間で統一されている。 KB5089549 同等のパッチが適用された Windows Server 2025 ホストで少なくとも 1 回は検証すること。
+
+### Phase 別の期待出力
+
+| Phase | 期待値 | テストホストでの結果 |
+|---|---|---|
+| P00 | 1 行コンパクト: `Secure Boot baseline: enabled=true UEFI-CA-2023=NotStarted health=Warning [MS-sample=ok]` (値はホスト状態によって変化) | ✅ |
+| P05 | 新ファイル `<WorkRoot>\inf_inventory_report.txt` が存在し、 末尾に「UEFI Secure Boot Baseline」アペンディックスブロック (Chipset / Graphics: INF インベントリ後にセクション追加。 NPU: インラインインベントリ後に追加) | ✅ |
+| V05 | 新セクション: `[Dry-Run UEFI Baseline]` ヘッダの後にコンパクト readout。 `Health` が `Warning` または `Critical` の場合は黄色 advisory が続く | ✅ |
+| V06 | 新番号付きセクション: 「4. UEFI Secure Boot Baseline」 (Chipset / Graphics) または「Section 5: UEFI Secure Boot Baseline」 (NPU)。 組み込みインベントリ + MS サンプルスクリプト結果 (BucketId / Confidence / EventNNNN カウント) を含むマルチライン内訳 | ✅ |
+| I02 | 新事前チェックブロック: `--- UEFI Secure Boot baseline pre-check ---` の後にコンパクト readout と advisory。 ブロックしない。 | (Install フェーズ — 別途実行) |
+
+### ワークスペース成果物チェックリスト
+
+| 成果物 | 期待される配置 | 用途 |
+|---|---|---|
+| Raw stdout dump | `<WorkRoot>\secureboot_ms_sample\detect_stdout.log` | MS サンプルスクリプトが予期せぬ動作を示す際のフォレンジック |
+| 抽出 JSON | `<WorkRoot>\secureboot_ms_sample\detect_stdout_extracted.json` | パース済み `Hostname`、 `UEFICA2023Status`、 `BucketId`、 `Confidence`、 `Event1801..1803` |
+| インベントリレポートアペンディックス | `<WorkRoot>\inf_inventory_report.txt` | 変更管理ドキュメント向けに永続化されたスナップショット |
+
+注意事項:
+- MS サンプルスクリプトは KB5089549 (Win 11)、 KB5087544 / KB5088863 (Win 10)、 WS2025 同等 (2026-05-12 以降) で配信される。 未パッチホストでは `[MS-sample=ok]` ではなく `[MS-sample=absent]` が期待される。
+- 診断ファイルは `-CleanWorkRoot` を指定しない限り後続ランでも残存する。
+
+### 健全性クラスのアサーション
+
+| ホスト状態 | 期待される `health=` 値 |
+|---|---|
+| Secure Boot ON、 `UEFICA2023Status = Updated` (KB ロールアウト完了) | `Healthy` |
+| Secure Boot ON、 `UEFICA2023Status = NotStarted / Started / Pending` | `Warning` |
+| Secure Boot OFF | `Critical` |
+| `UEFICA2023Error` 非ゼロ | `Critical` |
+| Secure Boot 状態取得不能 (一部ファームウェア固有挙動) | `Unknown` |
+
+### スクリプト間整合性チェック
+
+同じホストで `-CleanWorkRoot` 付きで 3 スクリプトすべてを PrepareVerify モードで実行。 V06 でキャプチャされる `BucketId`、 `Confidence`、 イベントカウントは **3 スクリプト間で同一** になるべき (MS サンプルスクリプトは同じホスト状態に対して決定論的な結果を返す)。
 
 ---
 

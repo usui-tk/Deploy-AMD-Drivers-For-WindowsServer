@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     AMD Graphics Driver Build/Verify/Install deployment pipeline for
     Windows Server 2016 / 2019 / 2022 / 2025.
@@ -697,8 +697,8 @@ $Script:PhaseTimings      = New-Object System.Collections.Generic.List[object]
 #                does NOT need manual bumping. If two users disagree
 #                about behaviour, comparing this hash tells them
 #                instantly whether they are running the same file.
-$Script:ScriptVersion = 'graphics-2026.05.13-r17'
-$Script:ScriptTag     = 'graphics-cert-name-wdac-guid-r17'
+$Script:ScriptVersion = 'graphics-2026.05.16-r19'
+$Script:ScriptTag     = 'graphics-secureboot-baseline-r19'
 $Script:ScriptHash    = '(unknown)'
 try {
     # $PSCommandPath is the full path to the running script. Falls
@@ -1170,6 +1170,788 @@ function Set-Tls12 {
 # Windows. This script can detect, instruct, and refuse to enable
 # testsigning when Secure Boot is on (because the bcdedit setting
 # would be silently dropped on next boot).
+
+#####################################################################
+# SECTION 1d: UEFI Secure Boot certificate baseline (r48, 2026-05-13+)
+#####################################################################
+# Captures the runtime UEFI Secure Boot certificate / servicing state
+# and (when present) hands off to Microsoft's official sample script
+# %SystemRoot%\SecureBoot\ExampleRolloutScripts\Detect-SecureBootCertUpdateStatus.ps1
+# for additional fleet-rollout telemetry (BucketId / ConfidenceLevel /
+# event-log counts).
+#
+# Why this matters for this script:
+#   This script's drivers ride on top of UEFI Secure Boot. The UEFI db
+#   and KEK variables hold the firmware-level trust anchors. From mid-
+#   2026 onward, Microsoft is rolling out new UEFI CA 2023 certificates
+#   to replace the 2011 ones that begin expiring in June 2026.
+#   While our self-signed driver chain is at a HIGHER layer than UEFI
+#   (Windows cert stores + WDAC supplemental CI policy), a host with an
+#   incomplete or errored UEFI cert update is a meaningful diagnostic
+#   signal: bootloader trust may be in flux, the Secure-Boot-Update
+#   scheduled task may be running concurrently, and rollback / BitLocker
+#   prompts become more likely if I02 / I03 fire in that window.
+#
+# Two information sources, fused via a "hybrid C" pattern (per user choice):
+#
+#   1. Embedded path (always available):
+#        - Confirm-SecureBootUEFI + Get-SecureBootUEFI db / kek
+#        - HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot
+#        - HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing
+#        - \Microsoft\Windows\PI\Secure-Boot-Update scheduled task
+#
+#   2. Microsoft sample path (best-effort, only on devices that received
+#      KB5089549 / KB5087544 / KB5088863 or the WS2025 equivalent):
+#        - %SystemRoot%\SecureBoot\ExampleRolloutScripts\Detect-SecureBootCertUpdateStatus.ps1
+#      Adds BucketId / ConfidenceLevel / SkipReason / event-1801-1808
+#      counts that we cannot reasonably reimplement here.
+#
+# Reference:
+#   - Sample Secure Boot E2E Automation Guide (Microsoft KB 5084567)
+#   - May 12, 2026 cumulative update notes (KB5089549) - introduces the
+#     %SystemRoot%\SecureBoot\ExampleRolloutScripts folder.
+
+function Get-SecureBootCertificateInventory {
+    # Read UEFI Secure Boot state, certificate presence in db/KEK, and
+    # the Servicing registry block. This is the embedded fallback used
+    # when Microsoft's sample Detect script is NOT present on the host.
+    # All access is read-only; failures are captured rather than thrown.
+    [CmdletBinding()]
+    param()
+
+    $inv = [pscustomobject]@{
+        Source                              = 'Embedded'
+        Generated                           = (Get-Date)
+        Available                           = $false
+        ErrorMessage                        = $null
+        # Top-level Secure Boot state
+        SecureBootEnabled                   = $null
+        SecureBootDetectError               = $null
+        # 1P certs (required on ALL Secure-Boot-enabled systems)
+        FirstPartyDB2023Updated             = $null    # Windows UEFI CA 2023
+        FirstPartyKEK2023Updated            = $null    # Microsoft Corporation KEK 2K CA 2023
+        # 3P / IHV certs (required ONLY when 3P 2011 CA is present)
+        ThirdParty2011CAPresent             = $null    # Microsoft Corporation UEFI CA 2011
+        ThirdParty2023CertsRequired         = $null
+        ThirdParty2023CertUpdated           = $null    # Microsoft UEFI CA 2023
+        ThirdPartyOptionRom2023CertUpdated  = $null    # Microsoft Option ROM UEFI CA 2023
+        # HKLM:\...\Control\SecureBoot
+        HighConfidenceOptOut                = $null
+        MicrosoftUpdateManagedOptIn         = $null
+        AvailableUpdates                    = $null    # raw DWORD
+        AvailableUpdatesHex                 = $null    # hex repr
+        AvailableUpdatesPolicy              = $null    # GPO-set
+        AvailableUpdatesPolicyHex           = $null
+        # HKLM:\...\Control\SecureBoot\Servicing
+        UEFICA2023Status                    = $null    # Updated / In-Progress / etc.
+        UEFICA2023Error                     = $null
+        UEFICA2023ErrorEvent                = $null
+        # Servicing\DeviceAttributes
+        OEMManufacturerName                 = $null
+        OEMModelSystemFamily                = $null
+        OEMModelNumber                      = $null
+        FirmwareVersion                     = $null
+        FirmwareReleaseDate                 = $null
+        CanAttemptUpdateAfter               = $null
+        # Scheduled task \Microsoft\Windows\PI\Secure-Boot-Update
+        SecureBootTaskExists                = $false
+        SecureBootTaskStatus                = $null
+        SecureBootTaskEnabled               = $null
+    }
+
+    # ---- Top-level: Confirm-SecureBootUEFI ----
+    try {
+        $inv.SecureBootEnabled = [bool](Confirm-SecureBootUEFI -ErrorAction Stop)
+    } catch {
+        $inv.SecureBootDetectError = $_.Exception.Message
+        # Fallback via registry
+        try {
+            $rv = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State' `
+                                   -Name UEFISecureBootEnabled -ErrorAction Stop
+            $inv.SecureBootEnabled = [bool]$rv.UEFISecureBootEnabled
+        } catch {
+            # leave as $null
+        }
+    }
+
+    # ---- Certificate presence in UEFI db / KEK ----
+    # Only meaningful when Secure Boot is on AND we have admin (we do).
+    if ($inv.SecureBootEnabled -eq $true) {
+        try {
+            $dbBytes  = (Get-SecureBootUEFI db -ErrorAction Stop).bytes
+            $dbString = [System.Text.Encoding]::ASCII.GetString($dbBytes)
+            $inv.FirstPartyDB2023Updated = if ($dbString -match 'Windows UEFI CA 2023') { 1 } else { 0 }
+            $inv.ThirdParty2011CAPresent = if ($dbString -match 'Microsoft Corporation UEFI CA 2011') { 1 } else { 0 }
+            $inv.ThirdParty2023CertsRequired = if ($inv.ThirdParty2011CAPresent -eq 1) { 1 } else { 0 }
+            $inv.ThirdParty2023CertUpdated          = if (($inv.ThirdParty2023CertsRequired -eq 1) -and ($dbString -match 'Microsoft UEFI CA 2023'))           { 1 } else { 0 }
+            $inv.ThirdPartyOptionRom2023CertUpdated = if (($inv.ThirdParty2023CertsRequired -eq 1) -and ($dbString -match 'Microsoft Option ROM UEFI CA 2023')) { 1 } else { 0 }
+        } catch {
+            # Unable to read db - leave related fields at $null
+        }
+        try {
+            $kekBytes  = (Get-SecureBootUEFI kek -ErrorAction Stop).bytes
+            $kekString = [System.Text.Encoding]::ASCII.GetString($kekBytes)
+            $inv.FirstPartyKEK2023Updated = if ($kekString -match 'Microsoft Corporation KEK 2K CA 2023') { 1 } else { 0 }
+        } catch {
+            # leave $null
+        }
+
+        # If 1P certs are not both present, 3P-updated flags lose meaning
+        if (($inv.FirstPartyDB2023Updated -eq 0) -or ($inv.FirstPartyKEK2023Updated -eq 0)) {
+            $inv.ThirdParty2023CertUpdated          = 0
+            $inv.ThirdPartyOptionRom2023CertUpdated = 0
+        }
+    }
+
+    # ---- HKLM:\...\Control\SecureBoot (optional values) ----
+    $sbKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot'
+    foreach ($name in 'HighConfidenceOptOut','MicrosoftUpdateManagedOptIn') {
+        try {
+            $rv = Get-ItemProperty -Path $sbKey -Name $name -ErrorAction Stop
+            $inv.$name = $rv.$name
+        } catch { }
+    }
+    foreach ($name in 'AvailableUpdates','AvailableUpdatesPolicy') {
+        try {
+            $rv = Get-ItemProperty -Path $sbKey -Name $name -ErrorAction Stop
+            $inv.$name = $rv.$name
+            if ($null -ne $rv.$name) {
+                $hexProp = "${name}Hex"
+                $inv.$hexProp = ('0x{0:X}' -f [int]$rv.$name)
+            }
+        } catch { }
+    }
+
+    # ---- HKLM:\...\Control\SecureBoot\Servicing ----
+    $svcKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
+    foreach ($name in 'UEFICA2023Status','UEFICA2023Error','UEFICA2023ErrorEvent') {
+        try {
+            $rv = Get-ItemProperty -Path $svcKey -Name $name -ErrorAction Stop
+            $inv.$name = $rv.$name
+        } catch { }
+    }
+
+    # ---- Servicing\DeviceAttributes ----
+    $daKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\DeviceAttributes'
+    foreach ($name in 'OEMManufacturerName','OEMModelSystemFamily','OEMModelNumber','FirmwareVersion','FirmwareReleaseDate') {
+        try {
+            $rv = Get-ItemProperty -Path $daKey -Name $name -ErrorAction Stop
+            $inv.$name = $rv.$name
+        } catch { }
+    }
+    try {
+        $rv = Get-ItemProperty -Path $daKey -Name 'CanAttemptUpdateAfter' -ErrorAction Stop
+        $caua = $rv.CanAttemptUpdateAfter
+        if ($null -ne $caua) {
+            if ($caua -is [byte[]]) {
+                $ft = [BitConverter]::ToInt64($caua, 0)
+                $inv.CanAttemptUpdateAfter = [DateTime]::FromFileTime($ft).ToUniversalTime()
+            } elseif ($caua -is [long] -or $caua -is [int64]) {
+                $inv.CanAttemptUpdateAfter = [DateTime]::FromFileTime($caua).ToUniversalTime()
+            } else {
+                $inv.CanAttemptUpdateAfter = $caua
+            }
+        }
+    } catch { }
+
+    # ---- Scheduled task \Microsoft\Windows\PI\Secure-Boot-Update ----
+    # Use the PowerShell-native Get-ScheduledTask cmdlet rather than
+    # schtasks.exe /FO CSV. schtasks emits LOCALIZED CSV column headers
+    # on non-English Windows (e.g. ja-JP returns the header in Japanese),
+    # which breaks $row.Status property access and silently mis-reports
+    # the task as 'Disabled' even when it is in fact Ready/Running.
+    # Get-ScheduledTask returns CIM objects with locale-independent
+    # English property names (.State = Ready / Running / Disabled / ...).
+    try {
+        $task = Get-ScheduledTask -TaskPath '\Microsoft\Windows\PI\' -TaskName 'Secure-Boot-Update' -ErrorAction Stop
+        if ($task) {
+            $inv.SecureBootTaskExists  = $true
+            $inv.SecureBootTaskStatus  = "$($task.State)"   # 'Ready' / 'Running' / 'Disabled' / 'Queued' / 'Unknown'
+            $inv.SecureBootTaskEnabled = ($task.State -eq 'Ready' -or $task.State -eq 'Running')
+        }
+    } catch {
+        # Task missing OR Get-ScheduledTask unavailable (very old PS).
+        # Fall back to schtasks /Query just for existence detection;
+        # status will remain locale-dependent but presence is unambiguous.
+        try {
+            $null = schtasks.exe /Query /TN '\Microsoft\Windows\PI\Secure-Boot-Update' /FO LIST 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $inv.SecureBootTaskExists  = $true
+                $inv.SecureBootTaskStatus  = 'present (state unknown - schtasks fallback)'
+                $inv.SecureBootTaskEnabled = $null
+            }
+        } catch { }
+    }
+
+    $inv.Available = $true
+    return $inv
+}
+
+function Get-MsSecureBootExampleScriptPath {
+    # Detect whether the official Microsoft sample scripts (delivered by
+    # KB5089549 / KB5087544 / KB5088863 from 2026-05-12 onward) are
+    # deployed on this host. Returns a small descriptor object with
+    # Present flag and per-script paths.
+    [CmdletBinding()]
+    param()
+
+    $root = Join-Path $env:SystemRoot 'SecureBoot\ExampleRolloutScripts'
+    $detect = Join-Path $root 'Detect-SecureBootCertUpdateStatus.ps1'
+    $enable = Join-Path $root 'Enable-SecureBootUpdateTask.ps1'
+
+    [pscustomobject]@{
+        Present       = (Test-Path -LiteralPath $detect)
+        RootPath      = $root
+        DetectScript  = if (Test-Path -LiteralPath $detect) { $detect } else { $null }
+        EnableScript  = if (Test-Path -LiteralPath $enable) { $enable } else { $null }
+    }
+}
+
+function Invoke-MsSecureBootDetectScript {
+    # Invoke %SystemRoot%\SecureBoot\ExampleRolloutScripts\Detect-SecureBootCertUpdateStatus.ps1
+    # in a child PowerShell session with -OutputPath set to a transient
+    # folder under the AMD workspace, then re-parse the resulting JSON.
+    #
+    # Returns a hybrid result object. .Available indicates whether the
+    # script ran AND produced parseable JSON. Failures (script missing,
+    # non-zero exit + no JSON, parse errors, etc.) populate .ErrorMessage
+    # and leave .Data null - callers should fall back to the embedded
+    # inventory in that case.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkRoot,
+        [string]$DetectScriptPath
+    )
+
+    $result = [pscustomobject]@{
+        Source       = 'Microsoft'
+        Generated    = (Get-Date)
+        Available    = $false
+        ErrorMessage = $null
+        ScriptPath   = $null
+        JsonPath     = $null
+        ExitCode     = $null
+        Data         = $null
+    }
+
+    if (-not $DetectScriptPath) {
+        $info = Get-MsSecureBootExampleScriptPath
+        if (-not $info.Present) {
+            $result.ErrorMessage = 'Detect-SecureBootCertUpdateStatus.ps1 not present (KB5089549/5087544/5088863 or WS2025 equivalent not installed, or device not eligible).'
+            return $result
+        }
+        $DetectScriptPath = $info.DetectScript
+    }
+    $result.ScriptPath = $DetectScriptPath
+
+    if (-not (Test-Path -LiteralPath $DetectScriptPath)) {
+        $result.ErrorMessage = "Detect script not found: $DetectScriptPath"
+        return $result
+    }
+
+    # Output folder under the AMD workspace (created if missing)
+    $outDir = Join-Path $WorkRoot 'secureboot_ms_sample'
+    try {
+        if (-not (Test-Path -LiteralPath $outDir)) {
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+        }
+    } catch {
+        $result.ErrorMessage = "Could not create output directory $outDir : $($_.Exception.Message)"
+        return $result
+    }
+
+    # Microsoft's sample writes "$HOSTNAME_latest.json" under -OutputPath
+    $expectedJson = Join-Path $outDir ("$env:COMPUTERNAME" + '_latest.json')
+
+    # Run in a child PowerShell. Determine the executable path from
+    # $PSHOME and the current edition rather than Get-Process -Id $PID
+    # (which can return the parent host - e.g. ISE / VS Code - rather
+    # than a usable powershell.exe / pwsh.exe). Falls back to PATH
+    # lookup if the resolved file is somehow missing.
+    $psExeName = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+    $psExe = Join-Path $PSHOME $psExeName
+    if (-not (Test-Path -LiteralPath $psExe)) {
+        # Fall back to PATH resolution; if even that fails, let the
+        # invocation below surface the error.
+        $psExe = $psExeName
+    }
+
+    # NOTE: variable named $psArgs (NOT $args) to avoid clobbering the
+    # automatic $args variable that PowerShell uses for unbound
+    # positional parameters in the enclosing function scope.
+    $psArgs = @(
+        '-NoProfile'
+        '-NonInteractive'
+        '-ExecutionPolicy','Bypass'
+        '-File', $DetectScriptPath
+        '-OutputPath', $outDir
+    )
+
+    try {
+        $stdout = & $psExe @psArgs 2>&1
+        $result.ExitCode = $LASTEXITCODE
+        # Microsoft's script returns exit code 0 (certs updated) or 1
+        # (not yet updated). Both are SUCCESSFUL invocations from our
+        # POV - we treat any other code, or missing JSON, as failure.
+        $stdoutText = ($stdout | Out-String)
+        if ($result.ExitCode -notin 0,1) {
+            $result.ErrorMessage = "Detect script exited with code $($result.ExitCode). stdout/err head: " + ($stdoutText.Substring(0, [Math]::Min(400, $stdoutText.Length)))
+        }
+    } catch {
+        $result.ErrorMessage = "Failed to launch detect script: $($_.Exception.Message)"
+        return $result
+    }
+
+    # Save the raw stdout for diagnostic purposes (helps debug when the
+    # detect script behaves unexpectedly in the wild). Best-effort: a
+    # write failure here is non-fatal.
+    try {
+        $stdoutPath = Join-Path $outDir 'detect_stdout.log'
+        Set-Content -LiteralPath $stdoutPath -Value $stdoutText -Encoding UTF8 -Force
+    } catch { }
+
+    # Try the file-based JSON path first (clean case: MS script accepted
+    # our -OutputPath and wrote HOSTNAME_latest.json).
+    if (Test-Path -LiteralPath $expectedJson) {
+        $result.JsonPath = $expectedJson
+        try {
+            $raw = Get-Content -LiteralPath $expectedJson -Raw -Encoding UTF8
+            $obj = $raw | ConvertFrom-Json
+            $result.Data = $obj
+            $result.Available = $true
+            return $result
+        } catch {
+            $result.ErrorMessage = "Failed to parse JSON output at ${expectedJson}: $($_.Exception.Message)"
+            # Fall through to stdout-parsing fallback
+        }
+    }
+
+    # Fallback: extract JSON from captured stdout. This is required
+    # because the Microsoft sample script (as of the 2026-05-12 delivery)
+    # has an over-aggressive input validator that rejects ANY -OutputPath
+    # containing ':' (which includes every absolute Windows path with a
+    # drive letter). When validation fires, the script prints
+    #   "Invalid OutputPath specified, outputting to stdout"
+    # and then Write-Output's the JSON to stdout. We capture stdout
+    # anyway (2>&1 above), so we can recover the JSON from there.
+    try {
+        # The detect script emits many Write-Host lines first, then the
+        # JSON object at the end. Strategy: scan for the LAST occurrence
+        # of a top-level '{' followed by a property the JSON always has
+        # ("Hostname", "UEFICA2023Status", etc.), then take from that
+        # '{' to the matching '}'.
+        $json = $null
+        # Look for the start of the JSON object. ConvertTo-Json output is
+        # human-formatted by default, so the object opens at column 1 on
+        # its own line: "^{" with leading whitespace.
+        # NOTE: variable named $jsonMatches (NOT $matches) to avoid
+        # clobbering the PowerShell automatic $matches that holds the
+        # result of the -match operator.
+        $jsonMatches = [regex]::Matches($stdoutText, '(?ms)^\s*\{[^{]*"(Hostname|UEFICA2023Status|SecureBootEnabled)"\s*:')
+        if ($jsonMatches.Count -gt 0) {
+            # Take the LAST match (in case earlier output happens to contain
+            # a similar pattern - very unlikely but defensive).
+            $start = $jsonMatches[$jsonMatches.Count - 1].Index
+            # Find matching closing brace by counting depth from $start.
+            $depth = 0
+            $end = -1
+            for ($i = $start; $i -lt $stdoutText.Length; $i++) {
+                $c = $stdoutText[$i]
+                if ($c -eq '{') { $depth++ }
+                elseif ($c -eq '}') {
+                    $depth--
+                    if ($depth -eq 0) { $end = $i; break }
+                }
+            }
+            if ($end -gt $start) {
+                $json = $stdoutText.Substring($start, $end - $start + 1)
+            }
+        }
+
+        if ($json) {
+            $obj = $json | ConvertFrom-Json
+            $result.Data = $obj
+            $result.Available = $true
+            $result.JsonPath = '(stdout fallback - file output rejected by MS script path validator)'
+            # Optional: also persist the extracted JSON for forensics.
+            try {
+                $jsonRecoveryPath = Join-Path $outDir 'detect_stdout_extracted.json'
+                Set-Content -LiteralPath $jsonRecoveryPath -Value $json -Encoding UTF8 -Force
+                $result.JsonPath = $jsonRecoveryPath
+            } catch { }
+            $result.ErrorMessage = $null     # clear earlier "file not found" message
+            return $result
+        }
+    } catch {
+        # Fall through to the final error path
+    }
+
+    if (-not $result.ErrorMessage) {
+        $result.ErrorMessage = "Detect script ran but neither file output nor stdout JSON could be parsed. See $stdoutPath for raw output."
+    }
+    return $result
+}
+
+function Get-SecureBootBaselineSnapshot {
+    # Top-level entry point. Returns a unified snapshot combining the
+    # embedded inventory (always present) and the Microsoft sample
+    # script output (when available). Adds an overall Health
+    # classification used by the report and the I02 pre-check.
+    #
+    # Health classification:
+    #   'Healthy'  - Secure Boot ON, UEFICA2023Status=Updated (or not
+    #                applicable), no UEFICA2023Error, no servicing error
+    #                events captured by the MS script.
+    #   'Warning'  - Secure Boot ON but UEFI CA 2023 rollout is still
+    #                in flight, OR scheduled task disabled, OR the MS
+    #                script reports error events (1795/1796/1802/1803).
+    #   'Critical' - Secure Boot OFF (with this script's WDAC path that
+    #                normally requires Secure Boot ON), OR UEFICA2023Error
+    #                non-zero indicating a stuck rollout.
+    #   'Unknown'  - Could not collect Secure Boot state at all (non-UEFI
+    #                host, or Confirm-SecureBootUEFI cmdlet unavailable).
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkRoot
+    )
+
+    $emb = Get-SecureBootCertificateInventory
+
+    $msInfo = Get-MsSecureBootExampleScriptPath
+    $ms = $null
+    if ($msInfo.Present) {
+        $ms = Invoke-MsSecureBootDetectScript -WorkRoot $WorkRoot -DetectScriptPath $msInfo.DetectScript
+    }
+
+    # Compute health
+    $health = 'Unknown'
+    $reasons = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $emb.SecureBootEnabled) {
+        $health = 'Unknown'
+        $reasons.Add('Secure Boot state could not be determined.') | Out-Null
+    } elseif ($emb.SecureBootEnabled -eq $false) {
+        $health = 'Warning'   # not Critical: testsigning path still works on SB-OFF hosts
+        $reasons.Add('Secure Boot is OFF in firmware - WDAC supplemental policy is unnecessary; legacy testsigning would apply.') | Out-Null
+    } else {
+        # Secure Boot ON - cert rollover progress matters
+        $health = 'Healthy'
+        if ($emb.UEFICA2023Status -and ($emb.UEFICA2023Status -ne 'Updated')) {
+            $health = 'Warning'
+            $reasons.Add("UEFI CA 2023 status: $($emb.UEFICA2023Status) (rollout not yet complete).") | Out-Null
+        }
+        if ($emb.UEFICA2023Error -and ($emb.UEFICA2023Error -ne 0)) {
+            $health = 'Critical'
+            $reasons.Add("UEFI CA 2023 error code recorded: $($emb.UEFICA2023Error).") | Out-Null
+        }
+        if ($emb.FirstPartyDB2023Updated -eq 0 -or $emb.FirstPartyKEK2023Updated -eq 0) {
+            if ($health -eq 'Healthy') { $health = 'Warning' }
+            $reasons.Add('First-party Secure Boot certs (UEFI CA 2023 / KEK 2K CA 2023) not yet present in firmware variables.') | Out-Null
+        }
+        if (($null -ne $emb.SecureBootTaskEnabled) -and ($emb.SecureBootTaskEnabled -eq $false)) {
+            if ($health -eq 'Healthy') { $health = 'Warning' }
+            $reasons.Add('Scheduled task \Microsoft\Windows\PI\Secure-Boot-Update is disabled or not ready.') | Out-Null
+        }
+    }
+    # MS-script signals further refine the health
+    if ($ms -and $ms.Available -and $ms.Data) {
+        $d = $ms.Data
+        foreach ($f in 'Event1795Count','Event1796Count','Event1802Count','Event1803Count') {
+            $v = $d.$f
+            if ($v -and ([int]$v -gt 0)) {
+                if ($health -eq 'Healthy') { $health = 'Warning' }
+                $reasons.Add("Microsoft sample script reports $f = $v.") | Out-Null
+            }
+        }
+        if ($d.Confidence -and ($d.Confidence -match '(?i)Action Req')) {
+            if ($health -eq 'Healthy') { $health = 'Warning' }
+            $reasons.Add("Microsoft sample script reports Confidence = $($d.Confidence).") | Out-Null
+        }
+    }
+
+    [pscustomobject]@{
+        Generated  = (Get-Date)
+        WorkRoot   = $WorkRoot
+        MsInfo     = $msInfo
+        Embedded   = $emb
+        Microsoft  = $ms
+        Health     = $health
+        Reasons    = @($reasons)
+    }
+}
+
+function Show-SecureBootBaselineSnapshot {
+    # Renders a baseline snapshot in this script's standard log style.
+    # -Compact prints a 3-line summary suitable for P00 / I02 banners.
+    # Without -Compact, prints a full section with cert / registry /
+    # task / Microsoft-script details for V05 / V06.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Snapshot,
+        [switch]$Compact
+    )
+
+    if (-not $Snapshot) { return }
+    $emb = $Snapshot.Embedded
+    $ms  = $Snapshot.Microsoft
+    $health = $Snapshot.Health
+    $healthColor = switch ($health) {
+        'Healthy'  { 'Green'   }
+        'Warning'  { 'Yellow'  }
+        'Critical' { 'Red'     }
+        default    { 'DarkGray' }
+    }
+
+    if ($Compact) {
+        $sb = if ($null -eq $emb.SecureBootEnabled) { 'unknown' } else { ($emb.SecureBootEnabled.ToString().ToLower()) }
+        $u2023 = if ($emb.UEFICA2023Status) { $emb.UEFICA2023Status } else { 'n/a' }
+        $msTag = if ($ms -and $ms.Available) { 'MS-sample=ok' }
+                 elseif ($Snapshot.MsInfo.Present) { 'MS-sample=present(err)' }
+                 else { 'MS-sample=absent' }
+        Write-Host ("    Secure Boot baseline: enabled={0,-5} UEFI-CA-2023={1,-12} health={2,-8} [{3}]" -f $sb, $u2023, $health, $msTag) -ForegroundColor $healthColor
+        return
+    }
+
+    # Non-compact mode: caller is responsible for printing the section
+    # banner (V06 prefixes the section with its own '--- 4. UEFI Secure
+    # Boot Baseline ---' header for numbering consistency with sections
+    # 1-3 above it). We print only the body to avoid the duplicate
+    # banner that was visible in the r49 first release.
+    Write-Host ("  Overall health     : {0}" -f $health) -ForegroundColor $healthColor
+    foreach ($r in $Snapshot.Reasons) {
+        Write-Host ("    - {0}" -f $r) -ForegroundColor $healthColor
+    }
+    Write-Host ''
+    Write-Host '  [Embedded inventory]'
+    Write-Host ("    Secure Boot enabled              : {0}" -f $(if ($null -eq $emb.SecureBootEnabled) { 'unknown' } else { $emb.SecureBootEnabled }))
+    if ($emb.SecureBootDetectError) {
+        Write-Host ("      Detect error: {0}" -f $emb.SecureBootDetectError) -ForegroundColor DarkGray
+    }
+    Write-Host ("    Windows UEFI CA 2023 (db, 1P)    : {0}" -f $(if ($null -eq $emb.FirstPartyDB2023Updated)  { 'n/a' } elseif ($emb.FirstPartyDB2023Updated  -eq 1) { 'present'    } else { 'NOT present' }))
+    Write-Host ("    Microsoft KEK 2K CA 2023 (KEK,1P): {0}" -f $(if ($null -eq $emb.FirstPartyKEK2023Updated) { 'n/a' } elseif ($emb.FirstPartyKEK2023Updated -eq 1) { 'present'    } else { 'NOT present' }))
+    Write-Host ("    Microsoft UEFI CA 2011 (db, 3P)  : {0}" -f $(if ($null -eq $emb.ThirdParty2011CAPresent)  { 'n/a' } elseif ($emb.ThirdParty2011CAPresent  -eq 1) { 'present (3P trusted)' } else { 'not present (1P-only trust)' }))
+    if ($emb.ThirdParty2023CertsRequired -eq 1) {
+        Write-Host ("    Microsoft UEFI CA 2023 (db, 3P)        : {0}" -f $(if ($null -eq $emb.ThirdParty2023CertUpdated)          { 'n/a' } elseif ($emb.ThirdParty2023CertUpdated          -eq 1) { 'present' } else { 'NOT present' }))
+        Write-Host ("    Microsoft Option ROM UEFI CA 2023 (3P) : {0}" -f $(if ($null -eq $emb.ThirdPartyOptionRom2023CertUpdated) { 'n/a' } elseif ($emb.ThirdPartyOptionRom2023CertUpdated -eq 1) { 'present' } else { 'NOT present' }))
+    }
+    Write-Host ("    UEFI CA 2023 status (registry)         : {0}" -f $(if ($emb.UEFICA2023Status)     { $emb.UEFICA2023Status     } else { 'n/a' }))
+    if ($emb.UEFICA2023Error) {
+        Write-Host ("    UEFI CA 2023 error code                : {0}" -f $emb.UEFICA2023Error) -ForegroundColor Yellow
+    }
+    Write-Host ("    AvailableUpdates / Policy              : {0} / {1}" -f $(if ($emb.AvailableUpdatesHex)       { $emb.AvailableUpdatesHex       } else { 'n/a' }), $(if ($emb.AvailableUpdatesPolicyHex) { $emb.AvailableUpdatesPolicyHex } else { 'n/a' }))
+    Write-Host ("    Secure-Boot-Update scheduled task      : {0}" -f $(
+        if (-not $emb.SecureBootTaskExists) { 'task not present' }
+        elseif ($null -eq $emb.SecureBootTaskEnabled) { "state=$($emb.SecureBootTaskStatus) (enabled-check skipped)" }
+        elseif ($emb.SecureBootTaskEnabled) { "Ready/Running (state=$($emb.SecureBootTaskStatus))" }
+        else { "Not running (state=$($emb.SecureBootTaskStatus))" }
+    ))
+    if ($emb.CanAttemptUpdateAfter) {
+        Write-Host ("    CanAttemptUpdateAfter (UTC)            : {0}" -f $emb.CanAttemptUpdateAfter) -ForegroundColor DarkGray
+    }
+    Write-Host ''
+    Write-Host '  [Microsoft sample script (KB5089549+ delivery)]'
+    if (-not $Snapshot.MsInfo.Present) {
+        Write-Host '    Not deployed on this host.' -ForegroundColor DarkGray
+        Write-Host ("    (Expected path: {0})" -f $Snapshot.MsInfo.RootPath) -ForegroundColor DarkGray
+        Write-Host '    Embedded inventory above is the sole source.' -ForegroundColor DarkGray
+    } elseif (-not $ms -or -not $ms.Available) {
+        Write-Host ('    Script present but invocation failed.') -ForegroundColor Yellow
+        if ($ms -and $ms.ErrorMessage) {
+            Write-Host ("      Reason: {0}" -f $ms.ErrorMessage) -ForegroundColor Yellow
+        }
+    } else {
+        $d = $ms.Data
+        Write-Host ('    Script invoked successfully.') -ForegroundColor Green
+        Write-Host ("    Script path  : {0}" -f $ms.ScriptPath) -ForegroundColor DarkGray
+        Write-Host ("    JSON path    : {0}" -f $ms.JsonPath) -ForegroundColor DarkGray
+        Write-Host ("    BucketId     : {0}" -f $(if ($d.BucketId) { $d.BucketId } else { 'n/a' }))
+        Write-Host ("    Confidence   : {0}" -f $(if ($d.Confidence) { $d.Confidence } else { 'n/a' }))
+        if ($d.SkipReasonKnownIssue) {
+            Write-Host ("    SkipReason   : {0}" -f $d.SkipReasonKnownIssue) -ForegroundColor Yellow
+        }
+        if ($d.KnownIssueId) {
+            Write-Host ("    KnownIssueId : {0}" -f $d.KnownIssueId) -ForegroundColor Yellow
+        }
+        $evtFields = @('Event1801Count','Event1808Count','Event1795Count','Event1796Count','Event1800Count','Event1802Count','Event1803Count')
+        $evtParts = foreach ($f in $evtFields) {
+            $v = $d.$f
+            if ($v -and ([int]$v -gt 0)) { ("{0}={1}" -f ($f -replace 'Count$',''), $v) }
+        }
+        if ($evtParts) {
+            Write-Host ("    Events       : {0}" -f ($evtParts -join '  '))
+        }
+        if ($d.MissingKEK) {
+            Write-Host '    MissingKEK   : TRUE (OEM needs to supply PK-signed KEK)' -ForegroundColor Yellow
+        }
+        if ($d.RebootPending) {
+            Write-Host '    RebootPending: TRUE (Event 1800 was observed)' -ForegroundColor Cyan
+        }
+    }
+    Write-Host ''
+}
+
+function Get-OrEnsureSecureBootBaseline {
+    # r50 (port from chipset): idempotent accessor for the cached
+    # Secure Boot baseline. Returns $Ctx.SecureBootBaseline when it is
+    # still valid; otherwise re-invokes Get-SecureBootBaselineSnapshot
+    # into the current $Ctx.WorkRoot so the diagnostic files
+    # (detect_stdout.log, detect_stdout_extracted.json) are co-located
+    # with the workspace.
+    #
+    # A cached snapshot is considered VALID when one of the following
+    # holds:
+    #   - The MS sample script was not available on this host, so
+    #     there is no diagnostic file to keep in sync (MsInfo.JsonPath
+    #     is $null). The in-memory data is the sole source of truth.
+    #   - MsInfo.JsonPath references a file that still exists AND that
+    #     file lives under the current $Ctx.WorkRoot tree.
+    #
+    # The cache becomes INVALID when:
+    #   - P01 wiped the workspace under -CleanWorkRoot, deleting a
+    #     JSON file that P00 had written to the workspace.
+    #   - An earlier release's P00 had written the JSON to %TEMP%
+    #     (pre-r19 behaviour) and we are now reading the snapshot
+    #     from a phase that displays the path.
+    # In either case we re-capture so the displayed path is honest.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Ctx
+    )
+
+    $needCapture = $true
+    if ($Ctx.SecureBootBaseline) {
+        $cached = $Ctx.SecureBootBaseline
+        $jsonPath = $null
+        try { $jsonPath = $cached.MsInfo.JsonPath } catch { }
+        if (-not $jsonPath) {
+            # MS sample script not present or did not produce a JSON
+            # path - nothing to keep co-located. Cached snapshot is fine.
+            $needCapture = $false
+        } elseif ($Ctx.WorkRoot -and ($jsonPath -like "$($Ctx.WorkRoot)*") -and (Test-Path -LiteralPath $jsonPath)) {
+            # JSON file is under the workspace and still exists.
+            $needCapture = $false
+        }
+    }
+
+    if ($needCapture) {
+        try {
+            $Ctx.SecureBootBaseline = Get-SecureBootBaselineSnapshot -WorkRoot $Ctx.WorkRoot
+        } catch {
+            Write-Warn2 ("Secure Boot baseline (re-)capture failed: {0}" -f $_.Exception.Message)
+        }
+    }
+
+    return $Ctx.SecureBootBaseline
+}
+
+function Format-SecureBootBaselineForReport {
+    # Render the baseline snapshot as a plain-text section suitable for
+    # appending to inf_inventory_report.txt. Mirrors the on-screen V06
+    # block but without colour codes / cursor positioning.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Snapshot
+    )
+
+    if (-not $Snapshot) { return '' }
+    $emb = $Snapshot.Embedded
+    $ms  = $Snapshot.Microsoft
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine(("=" * 78))
+    [void]$sb.AppendLine('UEFI Secure Boot Baseline')
+    [void]$sb.AppendLine(("=" * 78))
+    [void]$sb.AppendLine("Captured       : $($Snapshot.Generated.ToString('yyyy-MM-dd HH:mm:ss'))")
+    [void]$sb.AppendLine("Overall health : $($Snapshot.Health)")
+    if ($Snapshot.Reasons.Count -gt 0) {
+        [void]$sb.AppendLine('Reasons        :')
+        foreach ($r in $Snapshot.Reasons) {
+            [void]$sb.AppendLine("  - $r")
+        }
+    }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('-- Embedded inventory ' + ('-' * 56))
+    [void]$sb.AppendLine("Secure Boot enabled               : $(if ($null -eq $emb.SecureBootEnabled) { 'unknown' } else { $emb.SecureBootEnabled })")
+    if ($emb.SecureBootDetectError) {
+        [void]$sb.AppendLine("  Detect error                    : $($emb.SecureBootDetectError)")
+    }
+    [void]$sb.AppendLine("Windows UEFI CA 2023 (db, 1P)     : $(if ($null -eq $emb.FirstPartyDB2023Updated)  { 'n/a' } elseif ($emb.FirstPartyDB2023Updated  -eq 1) { 'present' } else { 'NOT present' })")
+    [void]$sb.AppendLine("Microsoft KEK 2K CA 2023 (KEK, 1P): $(if ($null -eq $emb.FirstPartyKEK2023Updated) { 'n/a' } elseif ($emb.FirstPartyKEK2023Updated -eq 1) { 'present' } else { 'NOT present' })")
+    [void]$sb.AppendLine("Microsoft UEFI CA 2011 (db, 3P)   : $(if ($null -eq $emb.ThirdParty2011CAPresent)  { 'n/a' } elseif ($emb.ThirdParty2011CAPresent  -eq 1) { 'present (3P trusted)' } else { 'not present (1P-only trust)' })")
+    if ($emb.ThirdParty2023CertsRequired -eq 1) {
+        [void]$sb.AppendLine("Microsoft UEFI CA 2023 (db, 3P)        : $(if ($null -eq $emb.ThirdParty2023CertUpdated)          { 'n/a' } elseif ($emb.ThirdParty2023CertUpdated          -eq 1) { 'present' } else { 'NOT present' })")
+        [void]$sb.AppendLine("Microsoft Option ROM UEFI CA 2023 (3P) : $(if ($null -eq $emb.ThirdPartyOptionRom2023CertUpdated) { 'n/a' } elseif ($emb.ThirdPartyOptionRom2023CertUpdated -eq 1) { 'present' } else { 'NOT present' })")
+    }
+    [void]$sb.AppendLine("UEFI CA 2023 status (registry)         : $(if ($emb.UEFICA2023Status) { $emb.UEFICA2023Status } else { 'n/a' })")
+    if ($emb.UEFICA2023Error) {
+        [void]$sb.AppendLine("UEFI CA 2023 error code                : $($emb.UEFICA2023Error)")
+    }
+    [void]$sb.AppendLine("AvailableUpdates                       : $(if ($emb.AvailableUpdatesHex)       { $emb.AvailableUpdatesHex       } else { 'n/a' })")
+    [void]$sb.AppendLine("AvailableUpdatesPolicy                 : $(if ($emb.AvailableUpdatesPolicyHex) { $emb.AvailableUpdatesPolicyHex } else { 'n/a' })")
+    [void]$sb.AppendLine("HighConfidenceOptOut                   : $(if ($null -ne $emb.HighConfidenceOptOut) { $emb.HighConfidenceOptOut } else { 'n/a' })")
+    [void]$sb.AppendLine("MicrosoftUpdateManagedOptIn            : $(if ($null -ne $emb.MicrosoftUpdateManagedOptIn) { $emb.MicrosoftUpdateManagedOptIn } else { 'n/a' })")
+    [void]$sb.AppendLine("OEM Manufacturer                       : $(if ($emb.OEMManufacturerName) { $emb.OEMManufacturerName } else { 'n/a' })")
+    [void]$sb.AppendLine("OEM Model SystemFamily / Number        : $(if ($emb.OEMModelSystemFamily) { $emb.OEMModelSystemFamily } else { 'n/a' }) / $(if ($emb.OEMModelNumber) { $emb.OEMModelNumber } else { 'n/a' })")
+    [void]$sb.AppendLine("Firmware Version / ReleaseDate         : $(if ($emb.FirmwareVersion) { $emb.FirmwareVersion } else { 'n/a' }) / $(if ($emb.FirmwareReleaseDate) { $emb.FirmwareReleaseDate } else { 'n/a' })")
+    if ($emb.CanAttemptUpdateAfter) {
+        [void]$sb.AppendLine("CanAttemptUpdateAfter (UTC)            : $($emb.CanAttemptUpdateAfter)")
+    }
+    $sbTaskText = if (-not $emb.SecureBootTaskExists) {
+        'task not present'
+    } elseif ($null -eq $emb.SecureBootTaskEnabled) {
+        "state=$($emb.SecureBootTaskStatus) (enabled-check skipped)"
+    } elseif ($emb.SecureBootTaskEnabled) {
+        "Ready/Running (state=$($emb.SecureBootTaskStatus))"
+    } else {
+        "Not running (state=$($emb.SecureBootTaskStatus))"
+    }
+    [void]$sb.AppendLine("Secure-Boot-Update scheduled task      : $sbTaskText")
+
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('-- Microsoft sample script (KB5089549+ delivery) ' + ('-' * 26))
+    if (-not $Snapshot.MsInfo.Present) {
+        [void]$sb.AppendLine("Status         : NOT deployed on this host.")
+        [void]$sb.AppendLine("Expected path  : $($Snapshot.MsInfo.RootPath)")
+        [void]$sb.AppendLine("Result         : Embedded inventory above is the sole source.")
+    } elseif (-not $ms -or -not $ms.Available) {
+        [void]$sb.AppendLine("Status         : Present but invocation failed.")
+        if ($ms -and $ms.ErrorMessage) {
+            [void]$sb.AppendLine("Error          : $($ms.ErrorMessage)")
+        }
+    } else {
+        $d = $ms.Data
+        [void]$sb.AppendLine("Status         : Invoked successfully.")
+        [void]$sb.AppendLine("Script path    : $($ms.ScriptPath)")
+        [void]$sb.AppendLine("JSON path      : $($ms.JsonPath)")
+        [void]$sb.AppendLine("BucketId       : $(if ($d.BucketId)   { $d.BucketId   } else { 'n/a' })")
+        [void]$sb.AppendLine("Confidence     : $(if ($d.Confidence) { $d.Confidence } else { 'n/a' })")
+        if ($d.SkipReasonKnownIssue) {
+            [void]$sb.AppendLine("SkipReason     : $($d.SkipReasonKnownIssue)")
+        }
+        if ($d.KnownIssueId) {
+            [void]$sb.AppendLine("KnownIssueId   : $($d.KnownIssueId)")
+        }
+        $evtLines = @()
+        foreach ($f in 'Event1801Count','Event1808Count','Event1795Count','Event1796Count','Event1800Count','Event1802Count','Event1803Count') {
+            $v = $d.$f
+            if ($v -and ([int]$v -gt 0)) { $evtLines += ("  $f = $v") }
+        }
+        if ($evtLines.Count -gt 0) {
+            [void]$sb.AppendLine('Event counts   :')
+            foreach ($l in $evtLines) { [void]$sb.AppendLine($l) }
+        }
+        if ($d.MissingKEK) {
+            [void]$sb.AppendLine('MissingKEK     : TRUE (OEM needs to supply PK-signed KEK)')
+        }
+        if ($d.RebootPending) {
+            [void]$sb.AppendLine('RebootPending  : TRUE (Event 1800 was observed)')
+        }
+        if ($d.WinCSKeyStatus) {
+            [void]$sb.AppendLine("WinCSKeyStatus : $($d.WinCSKeyStatus)")
+        }
+    }
+    [void]$sb.AppendLine('')
+    return $sb.ToString()
+}
 
 function Get-BootSigningEnvironment {
     # Returns a flat object describing the runtime boot-signing state.
@@ -4431,6 +5213,24 @@ If you really need to install on this Workstation host, pass
         Write-Ok "OS detected: $($Ctx.Os.Name) (build $($Ctx.Os.ActualBuild)) [$($Ctx.Os.Code)]"
         Write-Host "    ProductType: $($Ctx.Os.ProductType)  (1=Workstation, 3=Server)"
     }
+
+    # ---- UEFI Secure Boot certificate baseline (r49 port from chipset) ----
+    # Capture once at P00 and cache on $Ctx so later phases (P05 report
+    # append, V05 / V06 display, I02 pre-check) can reuse the same
+    # snapshot without re-invoking the Microsoft sample script multiple
+    # times in a single run. r50 (mirrored from chipset): the snapshot
+    # function uses New-Item -Force internally so the WorkRoot directory
+    # is auto-created if it does not exist yet (P01 hasn't run);
+    # subsequent phases revisit the snapshot via
+    # Get-OrEnsureSecureBootBaseline which detects a missing diagnostic
+    # file (e.g. when -CleanWorkRoot wipes it at P01) and re-captures.
+    try {
+        $Ctx.SecureBootBaseline = Get-SecureBootBaselineSnapshot -WorkRoot $Ctx.WorkRoot
+        Show-SecureBootBaselineSnapshot -Snapshot $Ctx.SecureBootBaseline -Compact
+    } catch {
+        Write-Warn2 ("Secure Boot baseline capture failed: {0}" -f $_.Exception.Message)
+    }
+
     Write-PhaseFooter 'P00' 'done'
 }
 
@@ -4934,11 +5734,17 @@ function Export-InfInventoryReport {
     # pasting into change-management documentation. Unlike the CSV
     # (which is machine-readable), this format prioritises human
     # readability with full unwrapped lines and section headers.
+    #
+    # r49 port from chipset: SecureBootSnapshot (optional) appends a
+    # UEFI Secure Boot baseline section at the end of the report. Pass
+    # $Ctx.SecureBootBaseline captured at P00; if omitted, the appendix
+    # is skipped silently.
     param(
         [Parameter(Mandatory)] $Detail,
         [Parameter(Mandatory)] [string[]]$PreferredVariants,
         [Parameter(Mandatory)] [string]$Path,
-        [Parameter(Mandatory)] [string]$OsName
+        [Parameter(Mandatory)] [string]$OsName,
+        [Parameter()] $SecureBootSnapshot
     )
 
     $sb = New-Object System.Text.StringBuilder
@@ -4983,6 +5789,24 @@ function Export-InfInventoryReport {
             }
         }
         [void]$sb.AppendLine('')
+    }
+
+    # r49 port: append UEFI Secure Boot baseline appendix at the END.
+    if ($SecureBootSnapshot) {
+        try {
+            $appendix = Format-SecureBootBaselineForReport -Snapshot $SecureBootSnapshot
+            if ($appendix) {
+                [void]$sb.AppendLine('')
+                [void]$sb.Append($appendix)
+            }
+        } catch {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine(("=" * 78))
+            [void]$sb.AppendLine('UEFI Secure Boot Baseline (appendix render failed)')
+            [void]$sb.AppendLine(("=" * 78))
+            [void]$sb.AppendLine("Reason: $($_.Exception.Message)")
+            [void]$sb.AppendLine('')
+        }
     }
 
     Set-Content -LiteralPath $Path -Value $sb.ToString() -Encoding UTF8
@@ -5112,7 +5936,13 @@ function Invoke-PrepPhase05_AnalyzeInfs {
     # Write a more detailed flat report alongside the CSV, suitable
     # for pasting into change-management documents.
     $reportTxtPath = Join-Path $Ctx.Paths.Root 'inf_inventory_report.txt'
-    Export-InfInventoryReport -Detail $detailReport -PreferredVariants $preferredVariants -Path $reportTxtPath -OsName $Ctx.Os.Name
+
+    # r49 port from chipset: include UEFI Secure Boot baseline appendix.
+    # r50: use Get-OrEnsureSecureBootBaseline so the diagnostic file is
+    # guaranteed to be co-located with the workspace (re-captures into
+    # $Ctx.WorkRoot if P00 wrote to TEMP or if P01 wiped the workspace).
+    $sbSnapshot = Get-OrEnsureSecureBootBaseline -Ctx $Ctx
+    Export-InfInventoryReport -Detail $detailReport -PreferredVariants $preferredVariants -Path $reportTxtPath -OsName $Ctx.Os.Name -SecureBootSnapshot $sbSnapshot
 
     $totalSelected = @($report | Where-Object NeedsPatch).Count
     $totalAll = $report.Count
@@ -6708,6 +7538,21 @@ function Invoke-VerifyPhase05_DryRunInstall {
     }
     Write-Host ''
     Write-Ok 'Dry-run complete - no system state was modified.'
+
+    # r49 port from chipset: append a compact UEFI Secure Boot baseline
+    # readout so operators reviewing V05 know whether the host's
+    # firmware-layer trust state is healthy BEFORE they commit to the
+    # OS-layer self-signing path in I02/I03.
+    Write-Host ''
+    Write-Host '[Dry-Run UEFI Baseline] ---------------------------' -ForegroundColor Cyan
+    $sbSnapshot = Get-OrEnsureSecureBootBaseline -Ctx $Ctx
+    if ($sbSnapshot) {
+        Show-SecureBootBaselineSnapshot -Snapshot $sbSnapshot -Compact
+        if ($sbSnapshot.Health -eq 'Warning' -or $sbSnapshot.Health -eq 'Critical') {
+            Write-Host ("  Health is {0} - review the V06 / report appendix for details." -f $sbSnapshot.Health) -ForegroundColor Yellow
+        }
+    }
+
     Write-PhaseFooter 'V05' 'done'
 }
 
@@ -7979,6 +8824,17 @@ function Invoke-VerifyPhase06_HardwareImpactAnalysis {
         Write-Host ''
     }
 
+    # r49 port from chipset: Section 4 - UEFI Secure Boot Baseline.
+    # Operator-facing detailed readout of the same snapshot that
+    # appears in compact form at P00 / V05 and in textual form at the
+    # bottom of inf_inventory_report.txt. Numbered '4.' to be
+    # consistent with sections 1-3 above.
+    Write-Host '--- 4. UEFI Secure Boot Baseline ------------------------' -ForegroundColor Cyan
+    $sbSnapshot = Get-OrEnsureSecureBootBaseline -Ctx $Ctx
+    if ($sbSnapshot) {
+        Show-SecureBootBaselineSnapshot -Snapshot $sbSnapshot
+    }
+
     Write-PhaseFooter 'V06' 'done'
 }
 
@@ -8308,6 +9164,50 @@ function Invoke-InstPhase02_AuthorizeDriverSigning {
     Write-Host '--- AS-IS: current boot-signing state ---' -ForegroundColor Cyan
     $bootEnvBefore = Update-BootSigningEnvironmentForCtx -Ctx $Ctx
     Show-BootSigningEnvironment -BootEnv $bootEnvBefore
+    Write-Host ''
+
+    # ---- UEFI Secure Boot baseline pre-check (r49 port from chipset) ----
+    # Cross-check the firmware-layer UEFI Secure Boot state before we
+    # touch the OS-layer signing surface. This is a SOFT pre-check: we
+    # never block I02 on UEFI cert rollout state (the rollout and our
+    # WDAC policy are independent trust chains). We surface signals
+    # that have operational implications for what happens next:
+    #
+    #   - Secure Boot OFF + WDAC path planned: WDAC will still apply
+    #     (CI policy is independent of UEFI variables), but the
+    #     selected path is overspecified - testsigning would suffice.
+    #
+    #   - UEFI CA 2023 rollout in error state (UEFICA2023Error != 0,
+    #     or Event 1795/1796/1802/1803 present): there is a concurrent
+    #     firmware-level update in progress that may compete with
+    #     post-I02 reboots. Operators should know this before they
+    #     proceed.
+    #
+    #   - Secure-Boot-Update scheduled task disabled: the host has
+    #     opted out of MS-managed rollout, which is fine for self-hosted
+    #     deployments but worth recording.
+    Write-Host '--- UEFI Secure Boot baseline pre-check ---' -ForegroundColor Cyan
+    try {
+        $sbSnapshot = Get-OrEnsureSecureBootBaseline -Ctx $Ctx
+        if ($sbSnapshot) {
+            Show-SecureBootBaselineSnapshot -Snapshot $sbSnapshot -Compact
+
+            # WDAC path is planned but Secure Boot is OFF -> path is
+            # overspecified (testsigning would suffice). Not a block.
+            if (-not $Ctx.UseTestSigning -and $sbSnapshot.Embedded.SecureBootEnabled -eq $false) {
+                Write-Warn2 'WDAC path is planned, but Secure Boot is OFF. Code Integrity policy will still apply; testsigning would also suffice. Continuing.'
+            }
+            # Surface UEFI rollout error state without blocking
+            if ($sbSnapshot.Health -eq 'Critical') {
+                Write-Warn2 ('UEFI Secure Boot baseline health is Critical. Reasons: ' + ($sbSnapshot.Reasons -join '; '))
+                Write-Host '  This does NOT block I02 (different trust layer), but the operator should be aware.' -ForegroundColor Yellow
+            } elseif ($sbSnapshot.Health -eq 'Warning') {
+                Write-Host ('  Baseline health: Warning. ' + ($sbSnapshot.Reasons -join '; ')) -ForegroundColor Yellow
+            }
+        }
+    } catch {
+        Write-Warn2 ("UEFI Secure Boot baseline pre-check failed (non-fatal): {0}" -f $_.Exception.Message)
+    }
     Write-Host ''
 
     # ---- Decide which path to take ----
@@ -9563,6 +10463,13 @@ $Ctx = [pscustomobject]@{
     # r14: list of phase IDs that will execute this run (used by P00's
     # Workstation-Install guard to know whether any I-phase is queued).
     SelectedPhaseIds = @()
+    # r49 (chipset port): UEFI Secure Boot baseline snapshot, captured
+    # lazily at P00 and reused by P05 (report appendix), V05 / V06
+    # (display), and I02 (pre-check). Pre-declared as $null so the
+    # later '.SecureBootBaseline = ...' assignment is a property
+    # update on the existing pscustomobject rather than a new member
+    # add (which is the safer pattern in PSv5 + StrictMode).
+    SecureBootBaseline = $null
 }
 
 # ----- Cleanup short-circuit -----

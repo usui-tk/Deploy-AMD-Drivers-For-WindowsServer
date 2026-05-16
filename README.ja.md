@@ -25,6 +25,7 @@ AMD のコンシューマー向け Ryzen チップセットドライバ・Radeon
 - [パイプラインアーキテクチャ (21 phase)](#パイプラインアーキテクチャ-21-phase)
 - [パラメータ一覧（スクリプト別）](#パラメータ一覧スクリプト別)
 - [出力ファイル](#出力ファイル)
+- [UEFI Secure Boot ベースライン](#uefi-secure-boot-ベースライン)
 - [コンソール出力フォーマット](#コンソール出力フォーマット)
 - [システム要件](#システム要件)
 - [自己署名証明書: 有効期限・更新・失効](#自己署名証明書-有効期限更新失効)
@@ -490,6 +491,51 @@ $cred = Get-Credential -UserName 'you@example.com' -Message 'AMD アカウント
 | `HasServerDecoration` | bool   | INF が既に `ProductType=3` decoration を持つ (パッチ不要)                       |
 | `NeedsPatch`          | bool   | INF が Workstation のみの decoration を持ち `ProductType=3` mirror が必要       |
 | `SelectedForPipeline` | bool   | スクリプトの filter を通過し、 パッチ/署名パイプラインに入る INF                |
+
+---
+
+## UEFI Secure Boot ベースライン
+
+3 つのスクリプト (Chipset / Graphics / NPU) すべては、 ホストの UEFI Secure Boot 証明書ロールアウト状態を P00 で 1 回キャプチャし、 パイプライン全体でそのスナップショットを再利用します。 これは情報提供のみが目的で、 これらスクリプトが操作する OS レイヤの自己署名信頼チェーンは、 ファームウェアレイヤの UEFI Secure Boot 証明書データベースから**独立**しています。 複数の姉妹スクリプトを同じホストで実行する operator は一貫したベースライン情報を確認でき、 UEFI 証明書ロールアウト状況とドライバインストール結果を相関分析できます。
+
+### キャプチャされる内容
+
+スナップショットは 2 つのソースを統合します:
+
+1. **組み込みインベントリ** — `Confirm-SecureBootUEFI`、 `Get-SecureBootUEFI db/kek` で 5 つの正規証明書 (`Windows UEFI CA 2023`、 `Microsoft KEK 2K CA 2023`、 `Microsoft UEFI CA 2011`、 `Microsoft UEFI CA 2023`、 `Microsoft Option ROM UEFI CA 2023`) を直接読み取り。 `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot{,\Servicing,\Servicing\DeviceAttributes}` レジストリキーと、 `\Microsoft\Windows\PI\Secure-Boot-Update` スケジュールタスクの状態 (ja-JP ホスト上で locale 非依存に動作させるため `Get-ScheduledTask` を使用) を取得。
+
+2. **Microsoft サンプルスクリプト** — `%SystemRoot%\SecureBoot\ExampleRolloutScripts\Detect-SecureBootCertUpdateStatus.ps1` に配備されている場合 (Windows 11 では KB5089549、 Windows 10 では KB5087544 / KB5088863、 WS2025 は 2026-05-12 以降の同等パッチで配信)、 子 PowerShell として起動し、 Microsoft の confidence bucket 判定を取得。 MS スクリプトの入力検証バグ (`:` を含む `-OutputPath` を拒否する。 つまりあらゆる Windows 絶対パスが拒否される) を回避するため stdout-JSON フォールバックを実装。
+
+### 表示箇所
+
+| Phase | 表示形式 | 目的 |
+|---|---|---|
+| P00 | 1行コンパクト: `Secure Boot baseline: enabled=true UEFI-CA-2023=NotStarted health=Warning [MS-sample=ok]` | operator の即時認知 |
+| P05 | `inf_inventory_report.txt` 末尾のテキスト形式アペンディックス | 変更管理ドキュメント |
+| V05 | 1行コンパクト `[Dry-Run UEFI Baseline]` ブロック | コミット前の sanity 確認 |
+| V06 | 詳細マルチセクション内訳 (Chipset / Graphics は Section 4、 NPU は Section 5) | 詳細フォレンジック |
+| I02 | 事前チェック + 計画している WDAC / testsigning パスとの相互参照 | OS レイヤ署名操作前の operator 確認 |
+
+5 箇所すべてで同一のメモリ上スナップショットを再利用し、 MS サンプルスクリプトの呼び出しは 1 ラン当たり最大 1 回に制限されます。
+
+### 健全性判定
+
+- **Healthy** — Secure Boot ON、 UEFI CA 2023 ロールアウトが `Updated` (または対象外)、 ロールアウトエラーなし。
+- **Warning** — Secure Boot ON だがロールアウトが進行中 (`NotStarted` / `Started` / `Pending`)、 スケジュールタスクが無効、 または MS サンプルがロールアウトイベント診断を報告。
+- **Critical** — Secure Boot OFF (計画した WDAC パスは ON を前提)、 または `UEFICA2023Error` 非ゼロでロールアウトがスタック状態。
+
+I02 では判定結果を提示しますが、 **判定を理由にブロックすることはありません** (両信頼レイヤは独立)。 `Critical` または `Warning` では黄色の advisory が表示され、 operator が続行可否を判断します。
+
+### 診断ファイル
+
+MS サンプルスクリプトが起動された場合、 `<WorkRoot>\secureboot_ms_sample\` 配下に以下のファイルが生成されます:
+
+```
+detect_stdout.log                  - キャプチャした raw stdout (Write-Host + JSON)
+detect_stdout_extracted.json       - パース済みJSONオブジェクト (BucketId / Confidence / Event1801..1803 カウント)
+```
+
+これらはワークスペース成果物の一部として保持され、 `-CleanWorkRoot` を指定しない限り後続ランでも残ります。
 
 ---
 

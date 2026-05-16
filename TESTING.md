@@ -791,8 +791,54 @@ The following bugs were found and fixed during the validation runs above:
 | ThinkPad X13 Gen 1 (Win11 24H2) | graphics r14 | r16 / r47 | V05 "would upgrade 1067/1067 matched device(s)" inflation. `$matchedDevices` was being appended per INF HWID variant rather than per physical device, inflating counts. Fixed by deduplication on the physical DeviceID. |
 | ThinkPad X13 Gen 1 (Win11 24H2) | graphics r14 | r16 / r47 | Same-version, newer-date upgrade case formerly produced the nonsensical `patched newer (X) than current (X)` message. Now displays `patched same version (X) but newer date; PnP ranking prefers newer-dated driver` for clarity. |
 | Pipeline review (no field reports) | NPU r1 | (placeholder) | Currently no field-discovered bugs — but **no field reports exist either**, because the NPU script has not been run on physical NPU hardware yet. |
+| Lab (Win Server 2025, ja-JP) | chipset r49 (during validation) | r49 published, r50 polish | Three corrections during the initial Secure Boot baseline rollout: (a) `schtasks.exe /FO CSV` headers are ja-JP-localized — replaced with `Get-ScheduledTask`. (b) MS sample script's `-OutputPath` validator regex rejects every absolute Windows path containing `:` — added stdout-JSON extraction fallback. (c) `Show-...` and V06 caller printed a duplicate banner — removed inner banner. |
+| Lab (Win Server 2025, ja-JP) | chipset r49 / graphics r18 / NPU r4 | r50 / r19 / r5 | Polish patch: P00 wrote diagnostic files to `%TEMP%` when the workspace had not been created yet, which on `-CleanWorkRoot` runs left stale paths visible in V06. Replaced with consistent workspace-co-located diagnostics via the new `Get-OrEnsureSecureBootBaseline` helper. |
+| Lab (Win Server 2025, ja-JP) | NPU r4 | r5 | `Find-Inf2CatPath` filtered to `\x64\` / `\amd64\` directories, but inf2cat.exe is x86-only; P02 always failed with "inf2cat not found" then attempted winget WDK install (also fails — WDK is not on winget). Replaced helper body with x86-aware tree walk. |
+| Lab (Win Server 2025, ja-JP) | NPU r4 | r5 | `[ValidateSet]` on `-NpuOverride` rejected the default empty string, emitting a noisy warning on every invocation. Added `''` to the set. |
 
 For full validation logs and the corresponding fix commits, see <https://github.com/usui-tk/Deploy-AMD-Drivers-For-WindowsServer/commits/main>.
+
+---
+
+## 6a. UEFI Secure Boot baseline validation checklist
+
+This is the per-script validation checklist for the cross-script UEFI Secure Boot baseline feature (Chipset r50 / Graphics r19 / NPU r5). All three sister scripts share the same six core functions, so the expected output is uniform across them. Validate on at least one Windows Server 2025 host with KB5089549-equivalent updates installed.
+
+### Per-phase expected output
+
+| Phase | Expected | Actual on test host |
+|---|---|---|
+| P00 | One-line compact: `Secure Boot baseline: enabled=true UEFI-CA-2023=NotStarted health=Warning [MS-sample=ok]` (values vary by host state) | ✅ |
+| P05 | New file `<WorkRoot>\inf_inventory_report.txt` exists and ends with a "UEFI Secure Boot Baseline" appendix block (chipset / graphics: as section after the INF inventory; NPU: at end after the inline inventory) | ✅ |
+| V05 | New section: `[Dry-Run UEFI Baseline]` heading followed by one-line compact readout. If `Health` is `Warning` or `Critical`, a yellow advisory line follows | ✅ |
+| V06 | New numbered section: "4. UEFI Secure Boot Baseline" (chipset / graphics) or "Section 5: UEFI Secure Boot Baseline" (NPU). Multi-line breakdown showing embedded inventory + MS sample script results (BucketId / Confidence / EventNNNN counts) | ✅ |
+| I02 | New pre-check block: `--- UEFI Secure Boot baseline pre-check ---` followed by compact readout and advisory. Never blocks. | (Install phase — run separately) |
+
+### Workspace artefact checklist
+
+| Artefact | Expected location | Purpose |
+|---|---|---|
+| Raw stdout dump | `<WorkRoot>\secureboot_ms_sample\detect_stdout.log` | Forensics when MS sample script behaves unexpectedly |
+| Extracted JSON | `<WorkRoot>\secureboot_ms_sample\detect_stdout_extracted.json` | Parsed `Hostname`, `UEFICA2023Status`, `BucketId`, `Confidence`, `Event1801..1803` |
+| Inventory report appendix | `<WorkRoot>\inf_inventory_report.txt` | Persisted snapshot for change-management documentation |
+
+Notes:
+- The MS sample script is delivered by KB5089549 (Win 11), KB5087544 / KB5088863 (Win 10), or the WS2025 equivalent (starting 2026-05-12). On unpatched hosts, `[MS-sample=absent]` is expected instead of `[MS-sample=ok]`.
+- The diagnostic files survive across runs unless `-CleanWorkRoot` is passed.
+
+### Health-class assertions
+
+| Host state | Expected `health=` value |
+|---|---|
+| Secure Boot ON, `UEFICA2023Status = Updated` (KB rollout complete) | `Healthy` |
+| Secure Boot ON, `UEFICA2023Status = NotStarted / Started / Pending` | `Warning` |
+| Secure Boot OFF | `Critical` |
+| `UEFICA2023Error` non-zero | `Critical` |
+| Secure Boot status unreadable (some firmware quirks) | `Unknown` |
+
+### Cross-script consistency check
+
+Run all three scripts in PrepareVerify mode on the same host with `-CleanWorkRoot`. The captured `BucketId`, `Confidence`, and event counts in V06 should be **identical** across all three scripts (the MS sample script returns deterministic results for the same host state).
 
 ---
 

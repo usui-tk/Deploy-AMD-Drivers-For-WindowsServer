@@ -25,6 +25,7 @@ PowerShell pipeline that makes AMD's consumer-targeted Ryzen chipset, Radeon gra
 - [Pipeline architecture (21 phases)](#pipeline-architecture-21-phases)
 - [Parameters (per script)](#parameters-per-script)
 - [Output files](#output-files)
+- [UEFI Secure Boot baseline](#uefi-secure-boot-baseline)
 - [Console output format](#console-output-format)
 - [System requirements](#system-requirements)
 - [Self-signed certificate: expiry, renewal, and revocation](#self-signed-certificate-expiry-renewal-and-revocation)
@@ -489,6 +490,51 @@ Each script writes the following artifacts under its workspace (`C:\AMD-{Chipset
 | `HasServerDecoration` | bool   | INF already has `ProductType=3` decoration (no patching needed)                    |
 | `NeedsPatch`          | bool   | INF has Workstation-only decorations and requires `ProductType=3` mirroring        |
 | `SelectedForPipeline` | bool   | INF passes the script's filter and enters the patch/sign pipeline                  |
+
+---
+
+## UEFI Secure Boot baseline
+
+All three scripts (chipset / graphics / NPU) capture the host's UEFI Secure Boot certificate rollout state once at P00 and reuse the snapshot throughout the pipeline. This is informational only — the OS-layer self-signing trust chain that these scripts operate on is **independent** of the firmware-layer UEFI Secure Boot certificate database. Operators who run multiple sister scripts on the same host see consistent baseline reporting and can correlate UEFI cert-rollout state with driver-install outcomes.
+
+### What gets captured
+
+The snapshot combines two sources:
+
+1. **Embedded inventory** — direct reads via `Confirm-SecureBootUEFI`, `Get-SecureBootUEFI db/kek` for the five canonical certificates (`Windows UEFI CA 2023`, `Microsoft KEK 2K CA 2023`, `Microsoft UEFI CA 2011`, `Microsoft UEFI CA 2023`, `Microsoft Option ROM UEFI CA 2023`), `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot{,\Servicing,\Servicing\DeviceAttributes}` registry keys, and the `\Microsoft\Windows\PI\Secure-Boot-Update` scheduled task state (via `Get-ScheduledTask` for locale-independent results on ja-JP hosts).
+
+2. **Microsoft sample script** — when present at `%SystemRoot%\SecureBoot\ExampleRolloutScripts\Detect-SecureBootCertUpdateStatus.ps1` (delivered by KB5089549 on Windows 11, KB5087544 / KB5088863 on Windows 10, and the WS2025 equivalent starting 2026-05-12), the script is launched as a child PowerShell to fetch Microsoft's confidence bucket assessment. A stdout-JSON fallback handles the MS script's input-validator bug that rejects any `-OutputPath` containing `:` (every absolute Windows path).
+
+### Where it's displayed
+
+| Phase | Form | Purpose |
+|---|---|---|
+| P00 | one-line compact: `Secure Boot baseline: enabled=true UEFI-CA-2023=NotStarted health=Warning [MS-sample=ok]` | Immediate operator awareness |
+| P05 | full text appendix at the bottom of `inf_inventory_report.txt` | Change-management documentation |
+| V05 | one-line compact `[Dry-Run UEFI Baseline]` block | Pre-commit sanity readout |
+| V06 | full multi-section breakdown (Section 4 for chipset/graphics, Section 5 for NPU) | Detailed forensics view |
+| I02 | pre-check + cross-reference with planned WDAC / testsigning path | Operator confirmation before touching OS-layer signing |
+
+The same in-memory snapshot is reused across all five sites; the MS sample script is invoked at most once per run.
+
+### Health classification
+
+- **Healthy** — Secure Boot ON, UEFI CA 2023 rollout `Updated` (or not applicable), no rollout errors.
+- **Warning** — Secure Boot ON but rollout is in flight (`NotStarted` / `Started` / `Pending`), scheduled task is disabled, or MS sample reports rollout-event diagnostics.
+- **Critical** — Secure Boot OFF (planned WDAC path expects ON), or a non-zero `UEFICA2023Error` indicates a stuck rollout.
+
+I02 surfaces the classification but **never blocks** on it (the two trust layers are independent). On `Critical` or `Warning` the operator sees a yellow advisory and decides whether to proceed.
+
+### Diagnostic files
+
+When the MS sample script is invoked, the following files are written under `<WorkRoot>\secureboot_ms_sample\`:
+
+```
+detect_stdout.log                  - Raw captured stdout (Write-Host + JSON)
+detect_stdout_extracted.json       - Parsed JSON object (BucketId, Confidence, Event1801..1803 counts)
+```
+
+These are retained as part of the workspace artefact set and survive subsequent runs unless `-CleanWorkRoot` is passed.
 
 ---
 

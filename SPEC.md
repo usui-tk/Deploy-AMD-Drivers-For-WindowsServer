@@ -45,6 +45,7 @@
   - [A.11 Static Analysis with psa.py](#a11-static-analysis-with-psapy)
   - [A.12 Bilingual Documentation](#a12-bilingual-documentation)
   - [A.13 Development Workflow](#a13-development-workflow)
+  - [A.14 UEFI Secure Boot Baseline (cross-script feature)](#a14-uefi-secure-boot-baseline-cross-script-feature)
 - [Part B — Script-specific Specifications](#part-b--script-specific-specifications)
   - [B.1 Chipset script (`Deploy-AMDChipsetDriverOnWindowsServer.ps1`)](#b1-chipset-script-deploy-amdchipsetdriveronwindowsserverps1)
   - [B.2 Graphics script (`Deploy-AMDGraphicsDriverOnWindowsServer.ps1`)](#b2-graphics-script-deploy-amdgraphicsdriveronwindowsserverps1)
@@ -713,13 +714,79 @@ Before writing any new helper function:
 
 ---
 
+## A.14 UEFI Secure Boot Baseline (cross-script feature)
+
+A cross-cutting feature introduced to give operators consistent insight into the host's UEFI Secure Boot certificate rollout state. The feature is purely informational — UEFI-layer trust is independent of the OS-layer self-signing trust chain these scripts operate on — but it shares vocabulary and presentation across all three scripts so logs are correlatable.
+
+### Function set (7 functions, 6 cross-script-identical + 1 per-script helper)
+
+The first six functions are **byte-identical** across the chipset / graphics / NPU scripts so they can be lifted verbatim from any sister and pasted into a new one:
+
+| Function | Role |
+|---|---|
+| `Get-SecureBootCertificateInventory` | Enumerates db / KEK variables, reads `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\*` registry keys, queries the `Secure-Boot-Update` scheduled task via `Get-ScheduledTask` (locale-independent). |
+| `Get-MsSecureBootExampleScriptPath` | Detects whether `%SystemRoot%\SecureBoot\ExampleRolloutScripts\Detect-SecureBootCertUpdateStatus.ps1` is present on this host. |
+| `Invoke-MsSecureBootDetectScript` | Launches the MS sample script as a child PowerShell, captures stdout, falls back to in-stdout JSON extraction when the `-OutputPath` validator rejects absolute Windows paths. |
+| `Get-SecureBootBaselineSnapshot` | Top-level entry point. Combines `.Embedded`, `.MsInfo` (with `.Data`, `.JsonPath`, `.ErrorMessage`), `.Health` (`Healthy` / `Warning` / `Critical` / `Unknown`), `.Reasons[]`. |
+| `Show-SecureBootBaselineSnapshot` | Console renderer. Supports `-Compact` (one-line for P00 / V05 / I02) and full mode (V06). Callers control banners. |
+| `Format-SecureBootBaselineForReport` | Plain-text formatter for the `inf_inventory_report.txt` appendix. |
+
+The seventh function, `Get-OrEnsureSecureBootBaseline`, is **per-script** because state-management patterns differ:
+
+| Script | State holder | Helper signature |
+|---|---|---|
+| Chipset | `$Ctx` (pscustomobject) | `param([Parameter(Mandatory)] $Ctx)` |
+| Graphics | `$Ctx` (pscustomobject) | `param([Parameter(Mandatory)] $Ctx)` |
+| NPU | `$Script:DetectedPlatform` (hashtable), `$Script:WorkRoot` | `param()` — accesses script scope directly |
+
+The helper's contract is identical: return the cached snapshot when `(.MsInfo.JsonPath -is $null) -or (Test-Path -LiteralPath $JsonPath -and $JsonPath -like "$WorkRoot*")`; otherwise re-invoke into the current workspace. This handles three real-world cases:
+
+1. First-ever run, no workspace exists at P00 time — `Get-SecureBootBaselineSnapshot` creates the workspace dir as a side effect via `New-Item -Force`.
+2. `-CleanWorkRoot` specified, P01 wipes the workspace after P00 captured — P05 / V05 / V06 / I02 detect the missing diagnostic file and re-capture.
+3. Subsequent run, workspace pre-existing with prior diagnostic file present — helper returns cached snapshot (fast path).
+
+### Integration points (5 sites per script)
+
+| Phase | Action | Trigger |
+|---|---|---|
+| **P00** | Initial capture + `Show-... -Compact` | Always (first call seeds `$Ctx.SecureBootBaseline` / `$Script:DetectedPlatform.SecureBootBaseline`) |
+| **P05** | Re-capture if needed; pass snapshot to `Export-InfInventoryReport` (chipset / graphics) or inline writer (NPU); produce appendix in `inf_inventory_report.txt` | After CSV export, before phase footer |
+| **V05** | Re-capture if needed; `Show-... -Compact`; surface `Warning` / `Critical` advisory | After dry-run plan summary |
+| **V06** | Re-capture if needed; `Show-...` (full); displayed as Section 4 (chipset / graphics) or Section 5 (NPU, after the Ryzen AI reminder) | After existing sections |
+| **I02** | Re-capture if needed; pre-check display; cross-reference with planned WDAC / testsigning path; advisory only (never blocks) | Between AS-IS state display and path decision |
+
+### MS sample script integration
+
+Microsoft's `Detect-SecureBootCertUpdateStatus.ps1` (delivered via KB5089549 on Windows 11, KB5087544 / KB5088863 on Windows 10, WS2025 equivalent since 2026-05-12) is launched as a child PowerShell. Two robustness measures:
+
+- **`-OutputPath` validator bypass**: MS's regex `[<>:"|?*]` rejects every absolute Windows path (because `:` follows the drive letter). When validation fires, the MS script falls back to stdout JSON. Our `Invoke-MsSecureBootDetectScript` always tries the file path first, then extracts JSON from captured stdout (regex-anchored to known keys: `Hostname` / `UEFICA2023Status` / `SecureBootEnabled`).
+
+- **Diagnostic file persistence**: raw stdout is saved to `<WorkRoot>\secureboot_ms_sample\detect_stdout.log`; the recovered JSON to `detect_stdout_extracted.json`.
+
+### Health classification
+
+| Class | Conditions |
+|---|---|
+| `Healthy` | Secure Boot ON; `UEFICA2023Status` = `Updated` or `Not Applicable`; no `UEFICA2023Error`; scheduled task `Ready` |
+| `Warning` | Secure Boot ON; rollout in flight (`NotStarted` / `Started` / `Pending`); OR scheduled task disabled; OR MS sample reports rollout-event diagnostics |
+| `Critical` | Secure Boot OFF; OR non-zero `UEFICA2023Error` |
+| `Unknown` | None of the diagnostic sources were readable |
+
+I02 surfaces the class but never blocks — UEFI-layer cert rollout is independent of OS-layer signing trust.
+
+### Maintenance rule
+
+When adding a fourth sister script, the 6 cross-script-identical functions are lifted verbatim. The per-script helper is rewritten to match the new script's state-holder pattern. See B.1 / B.2 (chipset / graphics use `$Ctx`) and B.3 (NPU uses script scope) for the two known patterns.
+
+---
+
 # Part B — Script-specific Specifications
 
 ## B.1 Chipset script (`Deploy-AMDChipsetDriverOnWindowsServer.ps1`)
 
 ### Identification
 
-- **Current revision**: `chipset-2026.05.13-r48` (tag: `chipset-cert-name-wdac-guid-r48`)
+- **Current revision**: `chipset-2026.05.16-r50` (tag: `chipset-secureboot-baseline-r50`)
 - **Workspace**: `C:\AMD-Chipset-WS\`
 - **Self-signed cert subject**: `CN=AMD Chipset Driver Self-Sign (WS2025 Lab, At Own Risk)`
 - **Self-signed cert files**: `cert\AMD-Chipset-Driver-CodeSign.{pfx,cer}` (r48+; pre-r48 used `AMD-Driver-CodeSign.{pfx,cer}`)
@@ -765,7 +832,7 @@ Before writing any new helper function:
 
 ### Identification
 
-- **Current revision**: `graphics-2026.05.13-r17` (tag: `graphics-cert-name-wdac-guid-r17`)
+- **Current revision**: `graphics-2026.05.16-r19` (tag: `graphics-secureboot-baseline-r19`)
 - **Workspace**: `C:\AMD-Graphics-WS\`
 - **Self-signed cert subject**: `CN=AMD Graphics Driver Self-Sign (WS2025 Lab, At Own Risk)`
 - **Self-signed cert files**: `cert\AMD-Graphics-Driver-CodeSign.{pfx,cer}` (r17+; pre-r17 used `AMD-Driver-CodeSign.{pfx,cer}`)
@@ -798,7 +865,7 @@ Before writing any new helper function:
 
 ### Identification
 
-- **Current revision**: `npu-2026.05.13-r3` (tag: `npu-cert-name-r3`)
+- **Current revision**: `npu-2026.05.16-r5` (tag: `npu-secureboot-baseline-r5`)
 - **Workspace**: `C:\AMD-NPU-WS\`
 - **Self-signed cert subject**: `CN=AMD NPU Driver Self-Sign (WS2025 Lab, At Own Risk)`
 - **Self-signed cert files**: `cert\AMD-NPU-Driver-CodeSign.{pfx,cer}` (r3+; pre-r3 used `AMD-NPU-CodeSign.{pfx,cer}`)
@@ -993,6 +1060,44 @@ This had two downsides:
 4. **Implementation detail**: PowerShell's `Set-CIPolicyIdInfo` has no `-PolicyId` switch; we patch the `<PolicyID>` element directly in the XML after `Set-CIPolicyIdInfo -SupplementsBasePolicyID …` (no longer pass `-ResetPolicyID`).
 
 **Upgrade impact**: Same as D.7 — for a clean upgrade, run `-Action Cleanup` on the old script revision before deploying the new one. The new script's `Cleanup` action does detect legacy dynamic-GUID policies via the marker-file fallback, so an upgrade-then-cleanup also works (one extra cleanup cycle).
+
+---
+
+## D.9 UEFI Secure Boot baseline feature (Chipset r49→r50 / Graphics r18→r19 / NPU r4→r5)
+
+**Summary**: A cross-cutting informational feature added to all three scripts that captures the host's UEFI Secure Boot certificate-rollout state and surfaces it at P00 / P05 (report appendix) / V05 (compact) / V06 (full section) / I02 (pre-check). See `A.14 UEFI Secure Boot Baseline` for the full design.
+
+**Iteration history**:
+
+| Revision | Change |
+|---|---|
+| Chipset r49 / Graphics r18 / NPU r4 | Initial implementation: 6 core functions + per-script helper + 5 integration points |
+| Chipset r49 (during validation) | Three corrective fixes applied before publishing: (a) `schtasks.exe /Query /FO CSV` returns localized headers on ja-JP hosts; replaced with `Get-ScheduledTask` for locale-independent state. (b) MS sample script's `[<>:"|?*]` regex rejects every absolute Windows path; added stdout-JSON fallback. (c) `Show-...` non-compact mode and V06 caller both printed `--- UEFI Secure Boot Baseline ---` banner; removed inner banner so V06 controls section numbering. |
+| Chipset r50 / Graphics r19 / NPU r4→r5 | Polish patch: removed `%TEMP%` fallback from P00 (diagnostic files always co-locate with `$Ctx.WorkRoot`); added `Get-OrEnsureSecureBootBaseline` helper that re-captures when the cached snapshot's diagnostic file is missing or outside the current workspace. |
+
+**Cross-script symmetry**: The 6 core functions (Get-SecureBootCertificateInventory / Get-MsSecureBootExampleScriptPath / Invoke-MsSecureBootDetectScript / Get-SecureBootBaselineSnapshot / Show-SecureBootBaselineSnapshot / Format-SecureBootBaselineForReport) are byte-identical across the three scripts. Only the seventh `Get-OrEnsureSecureBootBaseline` helper differs (chipset/graphics: `param($Ctx)`; NPU: `param()` with script-scope access).
+
+---
+
+## D.10 NPU r5 — `Find-Inf2CatPath` x64-filter bug
+
+**Summary**: NPU's `Find-Inf2CatPath` delegated to `Find-ToolPath` which filters discovered files to `\x64\` or `\amd64\` directories only. inf2cat.exe ships **exclusively as an x86 binary** under the Windows SDK/WDK tree (Microsoft has never produced an x64 build of this tool), so the filter always returned `$null` and NPU P02 then tried to install the WDK via winget — which itself does not publish the WDK as a winget package. The result was a hard P02 FAILED on every host that had inf2cat installed in the standard location.
+
+**Root cause**: Reuse of a generic `Find-ToolPath` helper whose architecture filter is correct for signtool (which has both x64 and x86 variants) but wrong for inf2cat (x86 only).
+
+**Fix (NPU r5)**: Replaced the body of `Find-Inf2CatPath` with an inline `Get-ChildItem ... -Recurse -Filter 'inf2cat.exe'` walk over the SDK bin roots, no architecture filter. Highest `FileVersion` wins. Matches the lookup logic implicit in the chipset / graphics scripts where inf2cat is also found correctly.
+
+**Scope**: NPU-only; chipset and graphics scripts use a different inf2cat discovery path.
+
+---
+
+## D.11 NPU r5 — `NpuOverride` `[ValidateSet]` excludes empty string
+
+**Summary**: At script load, PowerShell logged `値  は NpuOverride 変数の有効な値ではないため、変数を検証できません` (and English equivalent) from the line `$Script:NpuOverride = $NpuOverride`. The warning fired because `[ValidateSet('PHX','HPT','STX','KRK')]` on `[string]$NpuOverride` rejects the default empty string when the variable is re-evaluated at the script-scope assignment. The warning was non-fatal (the script continued past it) but noisy and confusing.
+
+**Fix (NPU r5)**: Added `''` to the ValidateSet: `[ValidateSet('','PHX','HPT','STX','KRK')]`. The empty value represents "no override; auto-detect via Get-AmdNpuPlatform", which matches the prior default behaviour.
+
+**Scope**: NPU-only.
 
 ---
 
