@@ -99,24 +99,39 @@
   // (Chipset / Graphics / NPU / MSBthPan). Suppress those by name.
   //
   // SHARED HELPER functions NOT listed here MUST stay in sync. As of
-  // r60 / r28 / r10 / r10, the following are kept identical and any
-  // future drift will be flagged by PSA8001:
+  // r60 / r28 / r10 / r10, the following 34 functions are byte-for-byte
+  // identical across all 4 scripts and any future drift will be flagged
+  // by PSA8001:
   //
-  //     Format-Elapsed
-  //     _LogLine, Write-Step, Write-Ok, Write-Warn2, Write-Fail, Write-Skip
-  //     Write-Detail, Write-PhaseHeader, Write-PhaseFooter
+  //   Logging primitives (12):
+  //     Format-Elapsed, _LogLine, Write-Step, Write-Ok, Write-Warn2,
+  //     Write-Fail, Write-Skip, Write-Detail, Write-PhaseHeader,
+  //     Write-PhaseFooter, Get-PhaseElapsedTag, Format-DebugFailure
+  //
+  //   DebugTrace framework (12):
   //     _DebugTrace_NextSeq, _DebugTrace_Now,
-  //     _DebugTrace_WriteJsonlLine, _DebugTrace_RetireFrame
-  //     Start-DebugTrace, Stop-DebugTrace, Set-DebugStep
-  //     Write-DebugFailureReport, Format-DebugFailure
-  //     Enable-DebugTraceFileOutput, Disable-DebugTraceFileOutput
+  //     _DebugTrace_WriteJsonlLine, _DebugTrace_RetireFrame,
+  //     Start-DebugTrace, Stop-DebugTrace, Set-DebugStep,
+  //     Write-DebugFailureReport,
+  //     Enable-DebugTraceFileOutput, Disable-DebugTraceFileOutput,
   //     Get-DebugTraceFileOutputStatus, Enable-AutoExportOnPhaseFailure
+  //
+  //   Environment / preflight (5):
+  //     Set-Tls12, Set-ConsoleUtf8,
+  //     Assert-Admin, Assert-PowerShellCompatibility,
+  //     Show-PowerShellEnvironment
+  //
+  //   Secure Boot baseline diagnostic trio (5):
+  //     Format-SecureBootBaselineForReport,
+  //     Get-SecureBootCertificateInventory,
+  //     Get-MsSecureBootExampleScriptPath,
+  //     Invoke-MsSecureBootDetectScript,
   //     Export-DebugTraceJson
-  //     Set-Tls12, Set-ConsoleUtf8
-  //     Assert-Admin, Assert-PowerShellCompatibility
-  //     Show-PowerShellEnvironment   (note: AMDNpu uses a hash-matched copy;
-  //                                   simplified Get/Show-BootSigningEnvironment
-  //                                   in AMDNpu is ALLOWED to drift, see below)
+  //
+  // Other helpers (Get-OrEnsureSecureBootBaseline, the boot-signing
+  // environment family, the WDAC policy family, etc.) are identical in
+  // 2-3 of the 4 scripts; their NPU variants are simplified and listed
+  // below in psa8001_ignore_functions to allow that drift intentionally.
 
   "psa8001_ignore_functions": [
     // ---- All 21 pipeline phase functions are script-specific by design ----

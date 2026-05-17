@@ -741,6 +741,30 @@ How the previously-documented findings were resolved in this sync:
 
 **Note on PSA5001 (plaintext password, error)**: previously reported as 1 / 1 / 3 errors. As of the psa-baseline-sync revision these were all suppressed inline at the `param()` declaration site, because the value flows to `signtool.exe /p` and `X509Certificate2(.., String)` — both of which require a plaintext `String` at the API boundary. The inline justification comments explain the design intent at each site. The 2026-05-18 sync preserves these suppressions unchanged.
 
+### A.11.5b Shared-helper contract (PSA8001-enforced)
+
+PSA8001 (cross-file function-body drift) enforces that **34 helper functions** are byte-for-byte identical across all four pipeline scripts. The contract surface as of r60 / r28 / r10 / r10:
+
+**Logging primitives (12 functions)**
+
+`Format-Elapsed`, `_LogLine`, `Write-Step`, `Write-Ok`, `Write-Warn2`, `Write-Fail`, `Write-Skip`, `Write-Detail`, `Write-PhaseHeader`, `Write-PhaseFooter`, `Get-PhaseElapsedTag`, `Format-DebugFailure`
+
+**DebugTrace framework (12 functions)**
+
+`_DebugTrace_NextSeq`, `_DebugTrace_Now`, `_DebugTrace_WriteJsonlLine`, `_DebugTrace_RetireFrame`, `Start-DebugTrace`, `Stop-DebugTrace`, `Set-DebugStep`, `Write-DebugFailureReport`, `Enable-DebugTraceFileOutput`, `Disable-DebugTraceFileOutput`, `Get-DebugTraceFileOutputStatus`, `Enable-AutoExportOnPhaseFailure`
+
+**Environment / preflight (5 functions)**
+
+`Set-Tls12`, `Set-ConsoleUtf8`, `Assert-Admin`, `Assert-PowerShellCompatibility`, `Show-PowerShellEnvironment`
+
+**Secure Boot baseline diagnostic helpers (5 functions)**
+
+`Format-SecureBootBaselineForReport`, `Get-SecureBootCertificateInventory`, `Get-MsSecureBootExampleScriptPath`, `Invoke-MsSecureBootDetectScript`, `Export-DebugTraceJson`
+
+**Verifying the contract locally**: run psa.py against all four scripts in a single invocation. Any drift in the 34 functions above will produce a PSA8001 error pointing at the function header. Functions intentionally per-script (phase functions, `Show-Help`, `Show-PhaseList`, `Find-KitTool`, per-driver-family helpers) are listed in `psa8001_ignore_functions` in `.psa.config.json`; functions identical in only 2-3 of the 4 scripts (e.g., AMD-family-only helpers, MSBthPan-only helpers) are not currently enforced because their absence in the 4th script is by design.
+
+When adding a new shared helper that should remain in sync across all four scripts, add it to all four scripts with identical bodies and do NOT add it to `psa8001_ignore_functions`. PSA8001 will then enforce its sync invariant from that point onward.
+
 ### Inline suppression and project-local configuration
 
 Two mechanisms are available for legitimate suppression:
