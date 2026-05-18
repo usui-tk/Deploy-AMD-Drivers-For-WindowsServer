@@ -139,6 +139,35 @@ independently.
      `$Script:ScriptVersion` / `$Script:ScriptTag` are unchanged;
      `psa.py` (current mainline) baseline of 0 / 0 / 0 across all
      four scripts is preserved.
+- **Documentation: consumer-side adoption of the `psa.py`
+  self-quality gates.** Following the upstream introduction of the
+  `--config-check` (Pillar 2) and `--self-check` (Pillar 3) gates in
+  `psa.py` 3.5.0, this repository's documentation was updated to
+  describe how, and when, consumers should run them:
+   - `SPEC.md` gained a new §A.11.6 *Self-quality gates for `psa.py`
+     (consumer-side usage)* that documents each gate's command-line
+     usage, expected output on a clean tree, exit-code semantics,
+     and an "activation matrix" mapping PR triggers (touching
+     `.psa.config.json`, refreshing a locally-cached `psa.py`, any
+     PR touching PowerShell files) to which gate to run when.
+   - `CONTRIBUTING.md` *Before opening a PR* gained a sub-bullet
+     under the existing static-analyzer step recommending
+     `--config-check` for any PR that edits `.psa.config.json`,
+     and `--self-check` for any PR that refreshes `psa.py` from
+     mainline. The full PowerShell static-analysis pass remains the
+     single hard PR gate; the new checks are cheap pre-flight aids,
+     not additional mandatory gates.
+   - `CONTRIBUTING.md` *Testing your change* smoke-test snippet
+     gained two optional pre-steps (0a and 0b) showing the exact
+     command line and expected output for each gate.
+   - `TESTING.md` §0 NPU verification entry and §3 NPU Verification
+     activity matrix now reference `--config-check` as a completed
+     pre-flight check against `.psa.config.json`.
+   - The four PowerShell scripts and `.psa.config.json` are
+     unchanged; the canonical 0 / 0 / 0 baseline across all four
+     scripts under `psa.py` latest mainline remains intact. The
+     `--config-check` gate against the shipped `.psa.config.json`
+     reports `issues : 0`.
 
 ### Removed
 

@@ -62,7 +62,7 @@ This document consolidates the validation results for `Deploy-Drivers-For-Window
 
 The NPU script's verification is currently limited to:
 
-1. **Static analysis** with `psa.py` (latest mainline) (36-rule check set including the PSA8xxx cross-file consistency / PSA9xxx complexity / PSAPxxxx project-convention families — `PSAP0001`..`PSAP0004`, **0 errors / 0 warnings / 0 info** with the repository-shipped `.psa.config.json` — see `SPEC.md` §A.11.5). `psa.py` is maintained as a canonical artifact in the [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) repository; obtain it per `SPEC.md` §A.11 before running, and follow the "Version policy" subsection there (validate against the latest mainline, no fixed-version pinning).
+1. **Static analysis** with `psa.py` (latest mainline) (36-rule check set including the PSA8xxx cross-file consistency / PSA9xxx complexity / PSAPxxxx project-convention families — `PSAP0001`..`PSAP0004`, **0 errors / 0 warnings / 0 info** with the repository-shipped `.psa.config.json` — see `SPEC.md` §A.11.5). `psa.py` is maintained as a canonical artifact in the [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) repository; obtain it per `SPEC.md` §A.11 before running, and follow the "Version policy" subsection there (validate against the latest mainline, no fixed-version pinning). Before the analysis pass, two cheap pre-flight self-quality gates SHOULD be run when applicable: `psa.py --config-check .psa.config.json` whenever `.psa.config.json` has been edited, and `psa.py --self-check` whenever a freshly-fetched `psa.py` is being introduced — see `SPEC.md` §A.11.6 for the activation matrix.
 2. **Code review** of the AMD-published `quicktest.py` NPU detection logic translated to PowerShell.
 3. **No `-Action Install` execution** has been performed by the maintainers anywhere.
 4. **No end-to-end run on physical NPU hardware** has been performed by the maintainers.
@@ -286,6 +286,7 @@ In other words, **PrepareVerify on Win11 24H2 functions as pre-migration verific
 | Verification activity | Status | Evidence |
 |---|---|---|
 | Static analysis with `psa.py` (latest mainline) with the repository-shipped `.psa.config.json` (see `SPEC.md` §A.11) | ✅ done | 0 errors / 0 warnings / 0 info — see `CHANGELOG.md` for the verified baseline (see §A.11.5) |
+| Pre-flight `.psa.config.json` schema validation via `psa.py --config-check` (see `SPEC.md` §A.11.6) | ✅ done | Config reports `issues : 0` against `psa.py` latest mainline |
 | Code review of NPU detection logic | ✅ done | `Get-AmdNpuPlatform` is a direct PowerShell port of AMD-published `quicktest.py` |
 | Detection on physical NPU machine | ❌ **NOT DONE** | No physical NPU hardware in maintainer's lab as of this writing |
 | INF parsing of real NPU driver ZIP | ❌ **NOT DONE** | NPU driver ZIPs (`NPU_RAI*_WHQL.zip`) are EULA-gated; maintainer does not have a verified copy of every RAI version's INF structure |

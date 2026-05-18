@@ -34,6 +34,9 @@ Blank issues are disabled — please pick the closest template even if not a per
 ### Before opening a PR
 
 1. **Run the static analyzer**: `python3 psa.py Deploy-AMDChipsetDriverOnWindowsServer.ps1 --config .psa.config.json` (and the other three scripts) and confirm **0 errors / 0 warnings / 0 info** with the repository-shipped `.psa.config.json`. The configuration opts in to the project-pipeline rules (PSAP0001 phase-naming, PSAP0002 script-identifier presence) and explicitly excludes the script-specific phase functions from the cross-file consistency check (PSA8001). The two opt-in revision-discipline rules PSAP0003 (`# rNN:` inline tag detection) and PSAP0004 (`REVISION HISTORY` block detection) must also be clean if enabled. Any drift from the baseline must be justified in the PR description. `psa.py` is not bundled in this repository — obtain it per [SPEC.md §A.11](./SPEC.md#a11-static-analysis-with-psapy) (`git clone` of the canonical [`ai-generated-artifacts`](https://github.com/usui-tk/ai-generated-artifacts) repo, or single-file `curl` of `psa.py`).
+   - **Recommended pre-flight checks** (cheap, no PowerShell file is analyzed; see [SPEC.md §A.11.6](./SPEC.md#a116-self-quality-gates-for-psapy-consumer-side-usage)):
+      - If your PR edits `.psa.config.json`, run `python3 psa.py --config-check .psa.config.json` first and confirm `issues : 0`. This catches typoed rule IDs, unknown top-level keys, type errors, and bad regex patterns before the full analysis pass.
+      - If your PR refreshes a locally-cached `psa.py` (i.e., re-fetches from mainline per the §A.11 *Version policy*), run `python3 psa.py --self-check` first and confirm `SPEC.md and RULES are in sync`. This catches partial-fetch accidents (e.g., having an old `SPEC.md` next to a new `psa.py`).
 2. **Run `-Action PrepareVerify -CleanWorkRoot`** on a real Windows host with the target AMD consumer devices (see [TESTING.md](./TESTING.md)) and confirm the full P00-V06 pipeline completes without errors. Because this pipeline targets AMD consumer hardware, meaningful PR validation requires physical access to such devices.
 3. **Update relevant docs** when you change user-visible behaviour, phase semantics, output format, or parameter sets. Per the repository-wide documentation language policy (see [SPEC.md §A.12](./SPEC.md#a12-documentation-language-policy)):
    - `README.md` is the **English master**; `README.ja.md` is its Japanese translation and **must be kept in sync** in the same PR.
@@ -58,6 +61,16 @@ Minimum smoke test:
 # 0. (one-time) Obtain psa.py from the canonical repository — see SPEC.md §A.11.
 #    Either: git clone https://github.com/usui-tk/ai-generated-artifacts.git ../ai-generated-artifacts
 #    Or:     curl -sSLO https://raw.githubusercontent.com/usui-tk/ai-generated-artifacts/main/scripts/python/powershell-static-analyzer/psa.py
+
+# 0a. (recommended; only if .psa.config.json was edited in this PR)
+#     Validate the schema of .psa.config.json before running the analyzer.
+python3 psa.py --config-check .psa.config.json
+# Expected: "issues : 0" — see SPEC §A.11.6.
+
+# 0b. (recommended; only if psa.py was refreshed from mainline in this PR)
+#     Verify the freshly-fetched psa.py and SPEC.md are from the same release.
+python3 psa.py --self-check
+# Expected: "SPEC.md and RULES are in sync (no drift detected)" — see SPEC §A.11.6.
 
 # 1. Run static analyzer (Linux / WSL / macOS / Windows with Python 3) on all four scripts
 python3 psa.py Deploy-AMDChipsetDriverOnWindowsServer.ps1

@@ -832,6 +832,102 @@ PSA8001 (cross-file function-body drift) enforces that **34 helper functions** a
 
 When adding a new shared helper that should remain in sync across all four scripts, add it to all four scripts with identical bodies and do NOT add it to `psa8001_ignore_functions`. PSA8001 will then enforce its sync invariant from that point onward.
 
+### A.11.6 Self-quality gates for `psa.py` (consumer-side usage)
+
+Since `psa.py` 3.5.0 the canonical analyzer ships three built-in
+**self-quality gates** that consumer repositories — including this one —
+SHOULD exercise. The gates are runnable from the command line, exit
+non-zero on any violation (suitable for CI), and require no third-party
+dependencies beyond a Python 3 interpreter. See the upstream
+[SPEC.md §12 "Self-quality gates"](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/SPEC.md#12-self-quality-gates)
+for the normative description; this subsection covers what this
+repository, as a consumer, does with each gate.
+
+#### Pillar 2: `--config-check` — validate `.psa.config.json`
+
+Whenever this repository's `.psa.config.json` is edited (adding /
+removing rule IDs, changing thresholds, adjusting the
+`psa8001_ignore_functions` list, etc.) the editor MUST run:
+
+```bash
+python3 /path/to/psa.py --config-check .psa.config.json
+```
+
+Expected output on a clean configuration:
+
+```
+psa.py config-check report
+  target : .psa.config.json
+  issues : 0
+
+  config is valid (0 issues found)
+```
+
+The check detects (and exits `2` on) every problem before any
+PowerShell file is analyzed: unknown top-level keys, unknown rule IDs
+in `enable` / `disable`, `enable` ↔ `disable` conflicts, malformed
+JSONC, bad `severity` values, non-positive integer thresholds, and
+uncompilable regex patterns in `psa8001_ignore_functions`. This is
+strictly faster and clearer than discovering the same problem when a
+later analyzer run silently ignores an unknown rule code.
+
+#### Pillar 3: `--self-check` — verify `psa.py` is internally consistent
+
+Whenever a new mainline `psa.py` is brought into the workflow per the
+A.11 *Version policy* (after fetching the `VERSION` file and comparing
+to the locally-used version), run:
+
+```bash
+python3 /path/to/psa.py --self-check
+```
+
+Expected output on an internally-consistent `psa.py`:
+
+```
+psa.py self-check report (SPEC.md ↔ RULES)
+  SPEC.md  : /.../scripts/python/powershell-static-analyzer/SPEC.md
+  rules    : 36 in RULES, 36 in SPEC.md §4
+  SPEC.md and RULES are in sync (no drift detected)
+```
+
+A non-zero exit means the local copy of `psa.py` and its sibling
+`SPEC.md` disagree on the rule set. The most common cause is having
+fetched only `psa.py` (or only `SPEC.md`) instead of the whole
+analyzer directory; refetch the entire
+`scripts/python/powershell-static-analyzer/` tree from mainline as a
+unit.
+
+#### Pillar 1 — `test_psa_rules.py`: informative only
+
+The upstream test suite covers every rule with positive / negative /
+edge fixtures and runs unattended. This repository does **not** need
+to run it directly: a passing upstream test suite is a precondition
+of the upstream release, and the `--self-check` gate above will
+detect any deserialization drift between that release and this
+repository's view of it. Consumers MAY run
+`python3 test_psa_rules.py` for diagnostic purposes (e.g., when
+investigating a suspected analyzer bug), but it is not part of the
+mandatory CI path for this repository.
+
+#### Activation scenarios
+
+The two consumer-relevant gates are invoked in the following
+situations:
+
+| Trigger | Gate to run | Why |
+|:---|:---|:---|
+| PR touches `.psa.config.json` | `--config-check` | Confirms the schema is still valid and no rule IDs were typoed. Fast (no PowerShell analysis runs). |
+| PR refreshes a locally-cached `psa.py` | `--self-check` | Confirms the freshly-fetched `psa.py` and `SPEC.md` are from the same release (catches partial-fetch accidents). |
+| Any PR touching PowerShell files | full `psa.py --config .psa.config.json *.ps1` | The normal static-analysis pass (unchanged by the introduction of the new gates). |
+| Investigating a suspected `psa.py` false positive / negative | `test_psa_rules.py` (upstream) | Optional, diagnostic. |
+
+These are additive: the existing "Required gate" (zero `errors` and
+zero `warnings` across all four pipeline scripts under the canonical
+`.psa.config.json`) remains the single hard requirement for landing a
+PR. `--config-check` and `--self-check` are **cheap pre-flight
+checks** that surface problems earlier than the full analysis pass
+would.
+
 ### Inline suppression and project-local configuration
 
 Two mechanisms are available for legitimate suppression:
