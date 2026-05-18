@@ -285,7 +285,7 @@ In other words, **PrepareVerify on Win11 24H2 functions as pre-migration verific
 
 | Verification activity | Status | Evidence |
 |---|---|---|
-| Static analysis with `psa.py` v3.2.0 with the repository-shipped `.psa.config.json` (see `SPEC.md` §A.11) | ✅ done | 0 errors / 0 warnings / 0 info — fully clean baseline as of r60 / r28 / r10 / r10 (see §A.11.5) |
+| Static analysis with `psa.py` v3.3.0 with the repository-shipped `.psa.config.json` (see `SPEC.md` §A.11) | ✅ done | 0 errors / 0 warnings / 0 info — fully clean baseline as of r60 / r28 / r10 / r10 (see §A.11.5) |
 | Code review of NPU detection logic | ✅ done | `Get-AmdNpuPlatform` is a direct PowerShell port of AMD-published `quicktest.py` |
 | Detection on physical NPU machine | ❌ **NOT DONE** | No physical NPU hardware in maintainer's lab as of this writing |
 | INF parsing of real NPU driver ZIP | ❌ **NOT DONE** | NPU driver ZIPs (`NPU_RAI*_WHQL.zip`) are EULA-gated; maintainer does not have a verified copy of every RAI version's INF structure |

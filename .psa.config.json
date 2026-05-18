@@ -33,7 +33,7 @@
 //     readability of the resulting console output. Long-line policy is
 //     enforced via code review rather than a mechanical width check.
 //
-// All other rules are left at their psa.py 3.2.0 defaults.
+// All other rules are left at their psa.py 3.3.0 defaults.
 //
 // -----------------------------------------------------------------------------
 // How to use this config

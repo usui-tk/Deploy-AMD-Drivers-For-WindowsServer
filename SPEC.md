@@ -48,7 +48,7 @@
   - [A.9 CSV Column Conventions](#a9-csv-column-conventions)
   - [A.10 Environment Evaluation (Phase P00)](#a10-environment-evaluation-phase-p00)
   - [A.11 Static Analysis with psa.py](#a11-static-analysis-with-psapy)
-  - [A.12 Bilingual Documentation](#a12-bilingual-documentation)
+  - [A.12 Documentation Language Policy](#a12-documentation-language-policy)
   - [A.13 Development Workflow](#a13-development-workflow)
   - [A.14 UEFI Secure Boot Baseline (cross-script feature)](#a14-uefi-secure-boot-baseline-cross-script-feature)
 - [Part B — Script-specific Specifications](#part-b--script-specific-specifications)
