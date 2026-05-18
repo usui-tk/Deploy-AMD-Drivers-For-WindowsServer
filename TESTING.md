@@ -20,10 +20,10 @@ This document consolidates the validation results for `Deploy-Drivers-For-Window
 
 | Script | Physical-hardware validation | Real driver install on target HW | Recommended use |
 |---|---|---|---|
-| **Chipset (r59)** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD (validated on r55; r56 added a breaking install-decision change; r57 fixed CiTool ENTER-prompt hang + pnputil exit=259; r58 added -LogFile and workspace relocation; r59 adds Debug Trace Facility + call-site instrumentation — see note below) | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
-| **Graphics (r27)** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD (validated on r23; r24 added a breaking install-decision change; r25 fixed CiTool ENTER-prompt hang + pnputil exit=259; r26 added -LogFile and workspace relocation; r27 adds Debug Trace Facility + call-site instrumentation — see note below) | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
-| **NPU (r9)** | ❌ **none** (no physical NPU machine in maintainer's lab) | ❌ **never executed** | **Experimental / research-grade only. Do not deploy in production.** |
-| **BthPan (r9)** | ⏳ **planned** — ThinkPad + Intel AX210 + Windows Server 2025 build 26100.32860 is the first target (see §4 below) | ❌ **not yet executed** | New script; physical validation pending. Logic shares the proven Phase / Secure Boot / WDAC framework from the Chipset script (Edit-InfForServer, Get-OsContext, Resolve-PhaseSelection, etc. are verbatim-inherited from Chipset r57). |
+| **Chipset** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD (see CHANGELOG for per-revision validation history) | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
+| **Graphics** | ✓ M75q Tiny Gen 2, X13 Gen 1 AMD (see CHANGELOG for per-revision validation history) | ✓ install completed successfully on M75q (WS2025) | Lab + cautious production |
+| **NPU** | ❌ **none** (no physical NPU machine in maintainer's lab) | ❌ **never executed** | **Experimental / research-grade only. Do not deploy in production.** |
+| **BthPan** | ⏳ **planned** — ThinkPad + Intel AX210 + Windows Server 2025 build 26100.32860 is the first target (see §4 below) | ❌ **not yet executed** | New script; physical validation pending. Logic shares the proven Phase / Secure Boot / WDAC framework from the Chipset script (Edit-InfForServer, Get-OsContext, Resolve-PhaseSelection, etc. are verbatim-inherited). |
 
 > **Note on the category-priority override** (see SPEC §D.15): The
 > category-priority override changes the install-decision semantics
@@ -104,7 +104,7 @@ If you have a Ryzen AI 300 / Ryzen AI Max 300 / Ryzen 7040 / 8040 series machine
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 # Stage 1: PrepareVerify, V06 review (system unchanged)
-# r58+ / r26+ recommended: use -LogFile to keep console colors while capturing the run.
+# Recommended: use -LogFile to keep console colors while capturing the run.
 $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
 .\Deploy-AMDChipsetDriverOnWindowsServer.ps1  -Action PrepareVerify -CleanWorkRoot `
     -LogFile "C:\Temp\m75q-amd-chipset_PrepareVerify_$ts.log"
@@ -202,7 +202,7 @@ Windows 11 Enterprise LTSC 2024 shares NT kernel build 26100 with Windows Server
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 # Install phases auto-block on Workstation OS — PrepareVerify only
-# r58+ / r26+ recommended: use -LogFile to keep console colors while capturing the run.
+# Recommended: use -LogFile to keep console colors while capturing the run.
 $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
 .\Deploy-AMDChipsetDriverOnWindowsServer.ps1  -Action PrepareVerify -CleanWorkRoot `
     -LogFile "C:\Temp\x13gen1-amd-chipset_PrepareVerify_Win11-preview_$ts.log"
@@ -252,7 +252,7 @@ Install phases auto-block (override with `-AllowWorkstationInstall`, but discour
 - **V06 upgrade candidates**:
   - AMD Audio CoProcessor: `v6.0.0.79 → v6.0.1.83` (real version upgrade)
   - AMD Radeon Graphics: `v31.0.21923.11000 → v31.0.21924.61` (real version upgrade)
-  - AMD HD Audio Device: `v10.0.1.30 → v10.0.1.30` (date-only newer; graphics r16 explicitly displays "same version, but newer date")
+  - AMD HD Audio Device: `v10.0.1.30 → v10.0.1.30` (date-only newer; the graphics script explicitly displays "same version, but newer date")
 
 #### Soundness checks
 
@@ -285,7 +285,7 @@ In other words, **PrepareVerify on Win11 24H2 functions as pre-migration verific
 
 | Verification activity | Status | Evidence |
 |---|---|---|
-| Static analysis with `psa.py` v3.3.0 with the repository-shipped `.psa.config.json` (see `SPEC.md` §A.11) | ✅ done | 0 errors / 0 warnings / 0 info — fully clean baseline as of r60 / r28 / r10 / r10 (see §A.11.5) |
+| Static analysis with `psa.py` v3.3.0 with the repository-shipped `.psa.config.json` (see `SPEC.md` §A.11) | ✅ done | 0 errors / 0 warnings / 0 info — see `CHANGELOG.md` for the verified baseline (see §A.11.5) |
 | Code review of NPU detection logic | ✅ done | `Get-AmdNpuPlatform` is a direct PowerShell port of AMD-published `quicktest.py` |
 | Detection on physical NPU machine | ❌ **NOT DONE** | No physical NPU hardware in maintainer's lab as of this writing |
 | INF parsing of real NPU driver ZIP | ❌ **NOT DONE** | NPU driver ZIPs (`NPU_RAI*_WHQL.zip`) are EULA-gated; maintainer does not have a verified copy of every RAI version's INF structure |
@@ -591,7 +591,7 @@ The two updates are independent — adding driver support does not require touch
 
 ## 4. Validation Result 4 (BthPan script) — planned
 
-> The BthPan script (r10) is brand-new; physical validation has not yet been performed. This section documents the planned first physical-validation run.
+> The BthPan script is brand-new; physical validation has not yet been performed. This section documents the planned first physical-validation run.
 
 ### 4.1 Planned target hardware
 
@@ -749,7 +749,7 @@ For full validation logs and the corresponding fix commits, see
 
 ## 7. UEFI Secure Boot baseline validation checklist
 
-This is the per-script validation checklist for the cross-script UEFI Secure Boot baseline feature (Chipset r50 / Graphics r19 / NPU r5). All three sister scripts share the same six core functions, so the expected output is uniform across them. Validate on at least one Windows Server 2025 host with KB5089549-equivalent updates installed.
+This is the per-script validation checklist for the cross-script UEFI Secure Boot baseline feature. All three sister scripts share the same six core functions, so the expected output is uniform across them. Validate on at least one Windows Server 2025 host with KB5089549-equivalent updates installed.
 
 ### Per-phase expected output
 
@@ -796,7 +796,7 @@ This section documents the expected diagnostic output and the
 validation procedure for AMD's two-layer Chipset Software 8.x
 (8.02.18.557 and later) extraction path. The extraction strategy and
 its historical evolution are described in
-[SPEC §D.12](./SPEC.md#d12-chipset-r54--installshield-sfx-extraction-for-amd-8x-installers);
+[SPEC §D.12](./SPEC.md#d12-installshield-sfx-extraction-for-amd-8x-installers-chipset);
 the revision in which this strategy was introduced is logged in
 [CHANGELOG.md](./CHANGELOG.md).
 
@@ -809,7 +809,7 @@ AMD Chipset Software 8.x ships as a two-layer wrapper:
 
 Earlier revisions detected the 7-Zip failure on the inner layer and fell back to launching the installer and harvesting from `C:\AMD\`, which is fragile because AMD aggressively cleans up that directory. The current pipeline inserts a dedicated InstallShield-aware strategy between the old 7-Zip strategy and the launch-watch fallback.
 
-See `SPEC.md` §B.1 "AMD 8.x installer architecture (r54+)" for the full architecture.
+See `SPEC.md` §B.1 "AMD 8.x installer architecture" for the full architecture.
 
 ### 8.2 Expected diagnostic output when Strategy 2 succeeds
 

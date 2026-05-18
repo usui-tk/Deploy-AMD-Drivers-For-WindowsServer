@@ -48,19 +48,6 @@ independently.
      `$Script:ScriptVersion` bumped to `graphics-2026.05.18-r29`,
      `$Script:ScriptTag` set to `notes-header-pattern-alignment`.
 
-- **README.md / README.ja.md revision-number sync.** Both READMEs now
-  reflect the current revision state under `[Unreleased]`:
-  Chipset **r61** / Graphics **r29** / NPU **r12** / BthPan **r11**.
-   - `README.md` L115 and the script comparison table header (L129)
-     updated from the stale `r60 / r28 / r10 / r10` line.
-   - `README.ja.md` L113 (`Chipset r60 / Graphics r28 / NPU r10 / BthPan r10`)
-     updated to match the EN master, and L127 (table header, previously
-     reading the much-older `r59 / r27 / r9 / r9` from a prior release —
-     a long-standing EN/JA desynchronization that pre-dated the r10
-     release) was brought in sync with the EN side.
-   - Per SPEC.md §A.12 (Documentation Language Policy), `README.md`
-     is the master and `README.ja.md` follows.
-
 - **NPU r12 (`.NOTES` header pattern alignment).** The NPU script's
   `.NOTES` header has been restructured to follow the same sidebar
   pattern used by `Deploy-MSBthPanInboxOnWindowsServer.ps1`:
@@ -122,6 +109,39 @@ independently.
   the current baseline; the opt-in ensures that any future commit
   re-introducing inline revision tags or in-script history blocks will
   be flagged by the static-analysis gate.
+
+### Removed
+
+- **Documentation policy enforcement: `CHANGELOG.md` is the single
+  source of truth for revision history.** Per the policy stated at
+  the top of this file (which previously applied only to per-script
+  PowerShell files), `README.md`, `README.ja.md`, `SPEC.md`, and
+  `TESTING.md` no longer carry inline revision-number references for
+  current state, feature-introduction timing, or in-text historical
+  attribution. Users should treat the mainline tree as the latest
+  version and consult `CHANGELOG.md` for revision-by-revision history.
+
+  Specifics:
+   - **Forward-looking references removed**: "Current release: Chipset
+     r61 / Graphics r29 / NPU r12 / BthPan r11", "as of rXX baseline",
+     per-script "Current revision" headers in SPEC.md Part B, etc.
+   - **Feature-introduction-timing references removed**: "From Chipset
+     r59 / Graphics r27 / NPU r9 / BthPan r9, ...", "(r58+ / r26+ /
+     r8+ / r2+) ..." etc.
+   - **Historical references abstracted (sections preserved)**: SPEC.md
+     Part D's 17 Known Pitfalls sections retained for design knowledge;
+     rNN attributions in section titles and body text replaced with
+     phrases such as "in an earlier revision" or "before the fix".
+   - **Log-output examples and ScriptVersion format examples
+     placeholderised**: literal `npu-2026.05.17-r9` → `npu-<yyyy.MM.dd>-r<NN>`
+     etc., preventing future drift.
+   - One `> **Historical note**` block in SPEC.md §A.5 (referring to
+     pre-fix encoding-enforcement state) was removed in full.
+   - Approximately 102 individual rNN references across the four
+     documents were touched; no PowerShell script bodies were
+     modified; `$Script:ScriptVersion` / `$Script:ScriptTag` are
+     unchanged; `psa.py` 3.3.0 baseline of 0 / 0 / 0 across all four
+     scripts remains intact.
 
 ### Verified
 

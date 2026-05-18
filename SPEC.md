@@ -70,17 +70,17 @@ These are the canonical sources of truth. **Pull from these directly; do not re-
 ### A.1.1 Reference scripts (phase / banner / log patterns)
 
 ```
-Deploy-AMDChipsetDriverOnWindowsServer.ps1   (the most mature implementation; canonical r57)
-Deploy-AMDGraphicsDriverOnWindowsServer.ps1  (graphics-specific platform detection; r25)
-Deploy-AMDNpuDriverOnWindowsServer.ps1       (NPU script with 4-tier installer resolution; r9)
-Deploy-MSBthPanInboxOnWindowsServer.ps1      (Microsoft inbox Bluetooth PAN driver enablement; r1)
+Deploy-AMDChipsetDriverOnWindowsServer.ps1   (the most mature implementation)
+Deploy-AMDGraphicsDriverOnWindowsServer.ps1  (graphics-specific platform detection)
+Deploy-AMDNpuDriverOnWindowsServer.ps1       (NPU script with 4-tier installer resolution)
+Deploy-MSBthPanInboxOnWindowsServer.ps1      (Microsoft inbox Bluetooth PAN driver enablement)
 ```
 
 These 21-phase deployment scripts are the canonical source for:
 
 - `Write-PhaseHeader` / `Write-PhaseFooter` / `Format-Elapsed`
 - `Write-Step` / `Write-Ok` / `Write-Warn2` / `Write-Fail` / `Write-Skip`
-- `Write-Detail` (continuation-line helper introduced in chipset r56 / graphics r24; see §A.5)
+- `Write-Detail` (continuation-line helper; see §A.5)
 - `Write-SubHeader` / `Write-SubHeader2` (Level-1 / Level-2 in-phase banners)
 - Banner block layout (Magenta `=` × 72, script-tag line, phase entry / exit)
 - `Show-PowerShellEnvironment` (P00 environment dump)
@@ -88,7 +88,7 @@ These 21-phase deployment scripts are the canonical source for:
 - `Test-AdminPrivilege` (hard-fail check on non-elevated session)
 - `Set-NetworkProtocol` (TLS hardening)
 - `Show-RunSummary` (per-action summary with PhaseTimings + ScriptHash)
-- `Resolve-PerDeviceDriverDecision` / `Resolve-PerInfInstallDecision` (chipset r56 / graphics r24 category-priority override; see §D.15)
+- `Resolve-PerDeviceDriverDecision` / `Resolve-PerInfInstallDecision` (category-priority override; see §D.15)
 
 When extending these scripts, **copy these helpers verbatim** from the most recent revision rather than re-implementing them.
 
@@ -123,7 +123,7 @@ See A.11 for details.
 
 ### A.1.4 Workspace path convention
 
-Each script writes to a dedicated workspace path under `C:\Temp\Workspace_<vendor>-<short>\` to guarantee non-collision between scripts. From Chipset r59 / Graphics r27 / NPU r9 / BthPan r9, all four workspaces are relocated under `C:\Temp\Workspace_*` (the script auto-creates `C:\Temp` on demand):
+Each script writes to a dedicated workspace path under `C:\Temp\Workspace_<vendor>-<short>\` to guarantee non-collision between scripts. All four workspaces are located under `C:\Temp\Workspace_*` (the script auto-creates `C:\Temp` on demand):
 
 | Script    | Default workspace path                     | Pre-relocation path (deprecated) |
 | --------- | ------------------------------------------ | -------------------------------- |
@@ -180,11 +180,12 @@ $Script:ScriptVersion = '<short-name>-YYYY.MM.DD-rNN'
 $Script:ScriptTag     = '<short-kebab-tag-describing-the-revision>'
 ```
 
-Examples in production:
+Format in production:
 
-- `chipset-2026.05.09-r47` / tag `chipset-dedupe-matched-devices-r47`
-- `graphics-2026.05.09-r16` / tag `graphics-dedupe-matched-devices-r16`
-- `npu-2026.05.10-r2` / tag `npu-sister-aligned-r2`
+- ScriptVersion: `<vendor>-<yyyy.MM.dd>-r<NN>`
+  (where `<vendor>` is one of `chipset`, `graphics`, `npu`, `msbthpan`)
+- ScriptTag:     `<vendor>-<short-kebab-tag>-r<NN>`
+  (kebab-cased summary of the revision's primary change)
 
 ### Self-fingerprint via SHA256
 
@@ -225,7 +226,7 @@ Emitted by the dispatcher (`Invoke-PhaseRunner`), **never** by phase functions:
 ```
 ========================================================================
  PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
- script: npu-2026.05.17-r9/e0ca465680db
+ script: npu-<yyyy.MM.dd>-r<NN>/<hash12>
 ========================================================================
 ... phase body output ...
  PHASE P00 -> DONE     elapsed: 0.45s
@@ -314,9 +315,9 @@ For these cases use the dedicated helper:
 | --------------- | ------ | --------------- | ---------------------------------------------------------------------------------- |
 | `Write-Detail`  | 4 sp.  | Gray            | Continuation row of a marker line, or interior row of a section-banner block       |
 
-`Write-Detail` introduced in Chipset r56 / Graphics r24 as the single sanctioned exception to the "every line has a marker" rule. It always prepends exactly 4 spaces and supports an optional `-Color <ConsoleColor>` parameter (defaulting to `Gray`) and a `-NoNewline` switch for label-then-value composition.
+`Write-Detail` is the single sanctioned exception to the "every line has a marker" rule. It always prepends exactly 4 spaces and supports an optional `-Color <ConsoleColor>` parameter (defaulting to `Gray`) and a `-NoNewline` switch for label-then-value composition.
 
-**Forbidden**: bare `Write-Host "    ..."` calls. All such call sites were migrated to `Write-Detail` in the r56 / r24 sweep. Adding a new bare 4-space `Write-Host` is a SPEC violation and will be rejected in review.
+**Forbidden**: bare `Write-Host "    ..."` calls. All such call sites have been migrated to `Write-Detail`. Adding a new bare 4-space `Write-Host` is a SPEC violation and will be rejected in review.
 
 ### Banner helpers (Level-0 / Level-1 / Level-2)
 
@@ -347,8 +348,6 @@ function Set-ConsoleUtf8 {
 
 The `try/catch` wrappers handle pinned-redirected console hosts (e.g. CI runners writing to a file with no real console) where the assignment may throw. See SPEC §D.16 for the root-cause analysis (CiTool.exe mojibake on ja-JP WS2025).
 
-> **Historical note**: Before Chipset r59 / Graphics r27 / NPU r9 (2026-05-17), this SPEC §A.5 / §D.5 requirement was documented but **not implemented in the scripts**. Only `Show-PowerShellEnvironment` displayed the *current* encoding without changing it. The fix is now mandatory before any phase that captures external tool stdout (I02, I03).
-
 ### TLS hardening
 
 P00 must enable TLS 1.2 + 1.3 (and degrade gracefully on PS 5.1 without TLS 1.3):
@@ -363,7 +362,7 @@ P00 must enable TLS 1.2 + 1.3 (and degrade gracefully on PS 5.1 without TLS 1.3)
 
 ### Run log capture (`-LogFile`)
 
-From Chipset r59 / Graphics r27 / NPU r9 / BthPan r9, the four scripts expose a `-LogFile <path>` parameter that activates a script-internal `Start-Transcript` / `Stop-Transcript` pair. This is the canonical mechanism for retaining a run log; it supersedes the legacy `... *>&1 | Tee-Object -FilePath ...` idiom for two reasons:
+The four scripts expose a `-LogFile <path>` parameter that activates a script-internal `Start-Transcript` / `Stop-Transcript` pair. This is the canonical mechanism for retaining a run log; it supersedes the legacy `... *>&1 | Tee-Object -FilePath ...` idiom for two reasons:
 
 1. **Coloring preservation.** `Tee-Object` on the outside of the pipeline captures the Write-Host output as the host stream is reduced to the pipeline value stream, which strips the `-ForegroundColor` decoration. `Start-Transcript` does not — the interactive console keeps its color, and the file gets every stream as plain text.
 2. **Stream completeness.** `Start-Transcript` captures all of Output / Host / Error / Warning / Verbose / Debug. `Tee-Object` on `*>&1` captures the merged value stream, but does not preserve the per-stream metadata.
@@ -436,8 +435,8 @@ Operators on a ja-JP host with the default cp932 console code page who pipe `-Lo
 | `-CleanWorkRoot`             | switch   |          | Delete the workspace before starting                              |
 | `-AllowWorkstationInstall`   | switch   |          | Permit Install on Workstation OS (default: blocked)               |
 | `-UseTestSigning`            | switch   |          | Fall back to bcdedit testsigning (default: WDAC policy)           |
-| `-WorkRoot`                  | string   |          | Workspace path override (r58+ / r26+ / r8+ / r2+ default: `C:\Temp\Workspace_<vendor>-<short>`) |
-| `-LogFile`                   | string   |          | (r58+ / r26+ / r8+ / r2+) Capture full console transcript via `Start-Transcript`. See §A.5 |
+| `-WorkRoot`                  | string   |          | Workspace path override (default: `C:\Temp\Workspace_<vendor>-<short>`) |
+| `-LogFile`                   | string   |          | Capture full console transcript via `Start-Transcript`. See §A.5 |
 | `-PfxPassword`               | string   |          | Self-signed PFX password (lab default: empty)                     |
 | `-CertValidityYears`         | int      |          | Self-signed cert validity (default: 5)                            |
 
@@ -715,9 +714,10 @@ All four scripts MUST be passed in a single invocation for PSA8001 cross-file an
 
 ### A.11.5 Documented baseline (warnings and info)
 
-This repository has the following **accepted** warning / info baseline as of
-the r60 / r28 / r10 / r10 revision (2026-05-18). Any deviation from these
-counts must be explained in the commit message and either added here or fixed.
+This repository has the following **accepted** warning / info baseline
+(see [CHANGELOG.md](./CHANGELOG.md) for the most recent verified counts).
+Any deviation from these counts must be explained in the commit message
+and either added here or fixed.
 
 | Script                                          | Errors | Warnings | Info | Total |
 | ----------------------------------------------- | -----: | -------: | ---: | ----: |
@@ -730,12 +730,12 @@ The 2026-05-18 release is the **first revision where the canonical static-analys
 
 How the previously-documented findings were resolved in this sync:
 
-| Rule                                       | Prior r59/r27/r9/r9 totals       | Resolution applied                                                                                                                                                                                                                                                                            |
+| Rule                                       | Prior totals (per script)       | Resolution applied                                                                                                                                                                                                                                                                            |
 | ------------------------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PSA1001` (brace balance, error)           | 1 / 1 / 0 / 0                    | Resolved by the **psa.py 3.2.0 tokenizer fix** (PowerShell `""` double-quote-doubling escape and the `` `` `` double-backtick escape are now handled correctly). No script-side change was required.                                                                                          |
 | `PSA2001` (undefined variable, error)      | 7 / 7 / 0 / 2                    | Resolved by **psa.py 3.2.0 scope-qualifier handling** (`$Script:`, `$global:`, `$local:`, `$private:` are now treated as runtime-deferred and never reported as undefined). No script-side change was required.                                                                              |
 | `PSA4001` (TODO / FIXME marker, info)      | 1 / 1 / 0 / 1                    | Resolved by **psa.py 3.2.0 marker-matching tightening** (the analyzer now requires a colon or whitespace-then-letter after the marker, and ignores embedded string literals like `"XXX"` inside comments). No script-side change was required.                                                |
-| `PSA2002` (unused parameter, w.)           | 0 / 0 / 0 / 3                    | Fixed in MSBthPan r10: three `$args` shadow assignments at L7556 / L7685 / L8863 (inf2cat / signtool / pnputil invocations) renamed to `$cmdArgs`.                                                                                                                                            |
+| `PSA2002` (unused parameter, w.)           | 0 / 0 / 0 / 3                    | Fixed in an earlier MSBthPan revision: three `$args` shadow assignments at L7556 / L7685 / L8863 (inf2cat / signtool / pnputil invocations) renamed to `$cmdArgs`.                                                                                                                                            |
 | `PSA2003` (-match against bare variable)   | 6 / 7 / 4 / 4                    | Annotated inline with `# psa-disable-line PSA2003 -- pattern variable is initialized in the enclosing scope; $null impossible by construction`. Pattern variables are local constants, never `$null`.                                                                                          |
 | `PSA3001` (Start-Process -ArgumentList)    | 4 / 3 / 0 / 9                    | Annotated inline with `# psa-disable-line PSA3001 -- Start-Process -ArgumentList is the canonical pattern for invoking signtool/inf2cat/pnputil with explicit args`.                                                                                                                          |
 | `PSA3004` (empty `catch`, w.)              | 31 / 31 / 13 / 29                | Annotated inline with `# psa-disable-line PSA3004 -- intentional best-effort cleanup; no error to surface`.                                                                                                                                                                                   |
@@ -744,13 +744,13 @@ How the previously-documented findings were resolved in this sync:
 | `PSA6003` (plural function noun, w.)       | 14 / 15 / 13 / 16                | Annotated inline with `# psa-disable-line PSA6003 -- compound noun (e.g., Policies, Drivers, Catalogs) is semantically plural for set-returning helpers`. Renaming would be a breaking API change against published pipeline phase names.                                                    |
 | `PSA8001` (function-body drift, new)       | n/a (rule new in 3.2.0)          | All shared helper functions are now byte-for-byte identical across the four scripts. Per-script functions (phase functions, `Show-Help`, etc.) are listed in `psa8001_ignore_functions` in `.psa.config.json`. The `[CmdletBinding()] param()` declaration on AMDNpu's `Set-ConsoleUtf8` was removed to match the canonical body in the other three scripts. |
 | `PSAP0001` (phase naming, new opt-in)      | n/a (rule new in 3.2.0)          | All 21 phase functions match `Invoke-(Prep\|Verify\|Inst)PhaseNN_DescriptiveName`. The single non-phase function with an `Invoke-` prefix (AMDNpu `Invoke-PhaseRunner`, the phase dispatcher) is annotated `# psa-disable-line PSAP0001 -- ... is the phase dispatcher, not a phase itself`.    |
-| `PSAP0002` (script-identifier trio, new)   | n/a (rule new in 3.2.0)          | All four scripts assign `$Script:ScriptVersion`, `$Script:ScriptHash`, and `$Script:ScriptShortTag` early in the SECTION 0 (Constants / Identity) block; this requirement was already met in r59 / r27 / r9 / r9 and survives the sync.                                                       |
+| `PSAP0002` (script-identifier trio, new)   | n/a (rule new in 3.2.0)          | All four scripts assign `$Script:ScriptVersion`, `$Script:ScriptHash`, and `$Script:ScriptShortTag` early in the SECTION 0 (Constants / Identity) block; this requirement is met by the current mainline and survives the sync.                                                       |
 
 **Note on PSA5001 (plaintext password, error)**: previously reported as 1 / 1 / 3 errors. As of the psa-baseline-sync revision these were all suppressed inline at the `param()` declaration site, because the value flows to `signtool.exe /p` and `X509Certificate2(.., String)` — both of which require a plaintext `String` at the API boundary. The inline justification comments explain the design intent at each site. The 2026-05-18 sync preserves these suppressions unchanged.
 
 ### A.11.5b Shared-helper contract (PSA8001-enforced)
 
-PSA8001 (cross-file function-body drift) enforces that **34 helper functions** are byte-for-byte identical across all four pipeline scripts. The contract surface as of r60 / r28 / r10 / r10:
+PSA8001 (cross-file function-body drift) enforces that **34 helper functions** are byte-for-byte identical across all four pipeline scripts. The current contract surface (see [CHANGELOG.md](./CHANGELOG.md) for the verified baseline):
 
 **Logging primitives (12 functions)**
 
@@ -885,7 +885,7 @@ Each README must include:
 
 ### Revision discipline
 
-Bump the revision number (e.g. `r47` → `r48`) on any commit that changes:
+Bump the revision number (e.g. `r<N>` → `r<N+1>`) on any commit that changes:
 
 - Phase semantics (any of the 21 phases)
 - Output format (CSV columns, log markers, banner layout)
@@ -1002,11 +1002,11 @@ When adding a fifth sister script, the 6 cross-script-identical functions are li
 
 ### Identification
 
-- **Current revision**: `chipset-2026.05.17-r59` (tag: `chipset-r59-debug-trace-facility-instrumentation-resume-ctx-autolog`)
-- **Workspace**: `C:\Temp\Workspace_AMD-Chipset\` (r58+; pre-r58: `C:\AMD-Chipset-WS\`)
+- **Current revision**: see [CHANGELOG.md](./CHANGELOG.md) (single source of truth)
+- **Workspace**: `C:\Temp\Workspace_AMD-Chipset\`
 - **Self-signed cert subject**: `CN=AMD Chipset Driver Self-Sign (WS2025 Lab, At Own Risk)`
-- **Self-signed cert files**: `cert\AMD-Chipset-Driver-CodeSign.{pfx,cer}` (r48+; pre-r48 used `AMD-Driver-CodeSign.{pfx,cer}`)
-- **WDAC policy GUID** (r48+): fixed `503860EA-8837-4169-9BC4-19E5AEED721B`; overridable via `-WdacPolicyGuid`. Pre-r48 deploys used a dynamically-generated PolicyId recorded in `cert\AmdSuppPolicyId.txt`.
+- **Self-signed cert files**: `cert\AMD-Chipset-Driver-CodeSign.{pfx,cer}`
+- **WDAC policy GUID**: fixed `503860EA-8837-4169-9BC4-19E5AEED721B`; overridable via `-WdacPolicyGuid`. Legacy deploys used a dynamically-generated PolicyId recorded in `cert\AmdSuppPolicyId.txt`.
 - **WDAC SupplementsBasePolicyID**: `{A244370E-44C9-4C06-B551-F6016E563076}` (Windows-shipped default base CI policy); overridable via `-WdacBasePolicyGuid`
 
 ### Inputs
@@ -1033,9 +1033,9 @@ When adding a fifth sister script, the 6 cross-script-identical functions are li
 
 ### Phase quirks
 
-- **P03 / P04** (r54): Multi-strategy installer extraction with three fallback layers (see "AMD 8.x installer architecture" below for the architecture that drives this):
+- **P03 / P04**: Multi-strategy installer extraction with three fallback layers (see "AMD 8.x installer architecture" below for the architecture that drives this):
     - **Strategy 1/3**: 7-Zip auto-detect. Works for AMD 6.x and earlier self-extracting EXEs.
-    - **Strategy 2/3** (r54, new): InstallShield `/a` administrative install + recursive `msiexec /a`. Standard path for AMD 8.x+ installers (NSIS outer + InstallShield SFX inner). Emits a per-OS-variant INF-coverage diagnostic post-extraction.
+    - **Strategy 2/3**: InstallShield `/a` administrative install + recursive `msiexec /a`. Standard path for AMD 8.x+ installers (NSIS outer + InstallShield SFX inner). Emits a per-OS-variant INF-coverage diagnostic post-extraction.
     - **Strategy 3/3**: Launch installer with `/S`, watch `C:\AMD\` for the extraction directory, terminate before install runs. Fragile final fallback retained for unrecognised formats.
 - **P05**: INFs are classified by source variant: `W11x64` (Win11) / `WTx64` (Workstation x64) / `WT6A_INF` / `WT64A`. Only the OS-matching variant is selected for the pipeline (per `Get-PreferredAmdSourceVariants`).
 - **P06**: PSP driver (`amdpsp.inf`) is **never patched** without an explicit BitLocker warning — see Disclaimer §5.
@@ -1045,9 +1045,9 @@ When adding a fifth sister script, the 6 cross-script-identical functions are li
 - 5-year cert validity (hard-coded in P07).
 - Patched drivers retain their AMD-published `DriverDate`; comparing AS-IS vs TO-BE uses `.Date` truncation to avoid timezone false positives (see Part D D.1).
 
-### AMD 8.x installer architecture (r54+)
+### AMD 8.x installer architecture
 
-Starting with AMD Chipset Software 8.x (first observed in version 8.02.18.557, distributed early 2026), AMD switched the installer bootstrapper to a two-layer wrapper that defeats 7-Zip-based extraction. The script's r54 multi-strategy extraction is designed against this architecture; the layered structure is documented here so that extraction failures can be diagnosed.
+Starting with AMD Chipset Software 8.x (first observed in version 8.02.18.557, distributed early 2026), AMD switched the installer bootstrapper to a two-layer wrapper that defeats 7-Zip-based extraction. The script's multi-strategy extraction (introduced for AMD 8.x) is designed against this architecture; the layered structure is documented here so that extraction failures can be diagnosed.
 
 #### Two-layer wrapper structure
 
@@ -1103,7 +1103,7 @@ Each sub-MSI, when expanded via `msiexec /a`, unpacks its driver binaries into t
 | Windows Server 2019 | 17763 | Redstone 5 | `WTx64` | Predates Win11; uses older driver ABI |
 | Windows Server 2016 | 14393 | Threshold | `WTx64` | Threshold era = WTx64 by definition |
 
-Other OS contexts fall back to `@('W11x64','WTx64')` (try both). The r54 extraction unpacks all three variants and lets the pipeline pick; this isolation keeps the extraction layer format-agnostic so future host-OS changes only need updates to `Get-PreferredAmdSourceVariants`.
+Other OS contexts fall back to `@('W11x64','WTx64')` (try both). The AMD 8.x extraction unpacks all three variants and lets the pipeline pick; this isolation keeps the extraction layer format-agnostic so future host-OS changes only need updates to `Get-PreferredAmdSourceVariants`.
 
 #### AMD's actual driver registration logic (key finding)
 
@@ -1173,12 +1173,12 @@ Older AMD platforms (Renoir, Cezanne) will produce fewer device-driver matches i
 
 ### Identification
 
-- **Current revision**: `graphics-2026.05.17-r27` (tag: `graphics-r27-debug-trace-facility-instrumentation-resume-ctx-autolog`)
-- **Workspace**: `C:\Temp\Workspace_AMD-Graphics\` (r26+; pre-r26: `C:\AMD-Graphics-WS\`)
+- **Current revision**: see [CHANGELOG.md](./CHANGELOG.md) (single source of truth)
+- **Workspace**: `C:\Temp\Workspace_AMD-Graphics\`
 - **Self-signed cert subject**: `CN=AMD Graphics Driver Self-Sign (WS2025 Lab, At Own Risk)`
-- **Self-signed cert files**: `cert\AMD-Graphics-Driver-CodeSign.{pfx,cer}` (r17+; pre-r17 used `AMD-Driver-CodeSign.{pfx,cer}`)
-- **WDAC policy GUID** (r17+): fixed `85336828-3080-41C5-81EC-FD587DC090D3`; overridable via `-WdacPolicyGuid`. Pre-r17 deploys used a dynamically-generated PolicyId recorded in `cert\AmdSuppPolicyId.txt`.
-- **WDAC SupplementsBasePolicyID** (r17+): `{A244370E-44C9-4C06-B551-F6016E563076}` (Windows-shipped default base CI policy); overridable via `-WdacBasePolicyGuid`. Pre-r17 used a non-standard `{B355481F-55DA-5D17-C662-07127F674187}` (see Part D D.8).
+- **Self-signed cert files**: `cert\AMD-Graphics-Driver-CodeSign.{pfx,cer}`
+- **WDAC policy GUID**: fixed `85336828-3080-41C5-81EC-FD587DC090D3`; overridable via `-WdacPolicyGuid`. Legacy deploys used a dynamically-generated PolicyId recorded in `cert\AmdSuppPolicyId.txt`.
+- **WDAC SupplementsBasePolicyID**: `{A244370E-44C9-4C06-B551-F6016E563076}` (Windows-shipped default base CI policy); overridable via `-WdacBasePolicyGuid`. A legacy graphics revision used a non-standard `{B355481F-55DA-5D17-C662-07127F674187}` (see Part D D.8).
 
 ### Inputs
 
@@ -1206,12 +1206,12 @@ Older AMD platforms (Renoir, Cezanne) will produce fewer device-driver matches i
 
 ### Identification
 
-- **Current revision**: `npu-2026.05.17-r9` (tag: `npu-r9-debug-trace-facility-instrumentation-resume-ctx-autolog`)
-- **Workspace**: `C:\Temp\Workspace_AMD-NPU\` (r8+; pre-r8: `C:\AMD-NPU-WS\`)
+- **Current revision**: see [CHANGELOG.md](./CHANGELOG.md) (single source of truth)
+- **Workspace**: `C:\Temp\Workspace_AMD-NPU\`
 - **Self-signed cert subject**: `CN=AMD NPU Driver Self-Sign (WS2025 Lab, At Own Risk)`
-- **Self-signed cert files**: `cert\AMD-NPU-Driver-CodeSign.{pfx,cer}` (r3+; pre-r3 used `AMD-NPU-CodeSign.{pfx,cer}`)
+- **Self-signed cert files**: `cert\AMD-NPU-Driver-CodeSign.{pfx,cer}`
 - **WDAC policy name**: `AMD-NPU-Driver-SelfSign-Lab`
-- **WDAC policy GUID**: fixed `8B2C4F12-1E9D-4D7B-A4F8-9C7E2B6A53D1` (per-script stable hardcoded value, used to identify the policy across runs for clean removal); overridable via `-WdacPolicyGuid` (r3+)
+- **WDAC policy GUID**: fixed `8B2C4F12-1E9D-4D7B-A4F8-9C7E2B6A53D1` (per-script stable hardcoded value, used to identify the policy across runs for clean removal); overridable via `-WdacPolicyGuid`
 
 ### Inputs (4-tier resolution)
 
@@ -1271,9 +1271,9 @@ Compatibility evaluation is a **separate** axis (`Test-NpuDriverRaiCompatibility
 
 ### Identification
 
-- **ScriptVersion**: `msbthpan-2026.05.17-r9`
-- **ScriptTag**: `msbthpan-r9-debug-trace-rehydration-autolog-relocate-ghostcall-sweep-logtag-fix`
-- **Default workspace**: `C:\Temp\Workspace_Microsoft-BthPan` (r2+; pre-r2: `C:\MSBthPan-WS`)
+- **ScriptVersion**: see [CHANGELOG.md](./CHANGELOG.md) (single source of truth)
+- **ScriptTag**: see [CHANGELOG.md](./CHANGELOG.md) (single source of truth)
+- **Default workspace**: `C:\Temp\Workspace_Microsoft-BthPan`
 - **Cert subject CN**: `Microsoft BthPan Driver Self-Sign (<OsCode> Lab, At Own Risk)` (where `<OsCode>` is `WS2016` / `WS2019` / `WS2022` / `WS2025` depending on the host)
 - **Cert filename**: `MS-BthPan-Driver-CodeSign.{pfx,cer}`
 - **WDAC supplemental policy XML/CIP filenames**: `MsBthPanSelfSignedSupplementalPolicy.{xml,cip}` (stored in `<workspace>\cert\`)
@@ -1452,7 +1452,7 @@ Every commit to `main` must satisfy the following gates.
 
 These are documented so that future revisions do not regress on already-fixed issues.
 
-## D.1 Chipset r46 — Timezone-induced DriverDate false positives
+## D.1 Timezone-induced DriverDate false positives
 
 **Symptom**: V05 dry-run plan reported `[UPGRADE]` action on identical drivers because `Win32_PnPSignedDriver.DriverDate` is stored as UTC midnight, but `Get-CimInstance` converts to local time, producing a day-offset on `[datetime]` comparison.
 
@@ -1465,31 +1465,31 @@ $pdate = if ($PatchedDate) { $PatchedDate.Date } else { $null }
 
 Preserved verbatim across chipset / graphics / NPU scripts.
 
-## D.2 NPU r1 — Hypothetical filename `NPU_RAI1.7.1_380_WHQL.zip`
+## D.2 Hypothetical filename `NPU_RAI1.7.1_380_WHQL.zip`
 
 **Symptom**: Initial NPU script revisions used `NPU_RAI1.7.1_380_WHQL.zip` as the default filename, mapping it to RAI 1.7.1. However AMD's actual published filename for RAI 1.7.1 is **the same as for RAI 1.6.1**, namely `NPU_RAI1.6.1_314_WHQL.zip` (driver build 32.0.203.314).
 
 **Fix**: NPU driver and Ryzen AI Software are versioned independently. The script now exposes them as two distinct parameters and the default `-NpuDriverPackage latest` resolves to `NPU_RAI1.6.1_314` (the newest documented). Verified against <https://ryzenai.docs.amd.com/en/latest/inst.html> 2026-04-19.
 
-## D.3 NPU r2 — `Show-PhaseHeader` vs `Write-PhaseHeader` naming drift
+## D.3 `Show-PhaseHeader` vs `Write-PhaseHeader` naming drift (NPU)
 
 **Symptom**: Early NPU revisions used `Show-PhaseHeader` (sister scripts used `Write-PhaseHeader`), and the phase entry banner color was Yellow `#`×78 (sister: Magenta `=`×72). This broke visual consistency across logs from multiple scripts run in sequence.
 
-**Fix**: Sister-script alignment refactor (r2) renamed to `Write-PhaseHeader` and adopted Magenta `=`×72 + script-tag DarkGray line. Now identical across all three scripts.
+**Fix**: Sister-script alignment refactor renamed to `Write-PhaseHeader` and adopted Magenta `=`×72 + script-tag DarkGray line. Now identical across all three scripts.
 
 ## D.4 NPU — Action `'Install'` semantic drift
 
-**Symptom**: NPU r1 mapped `-Action Install` to "all 21 phases" (full pipeline), while sister scripts mapped it to "Inst phases only" (assumes Prep + Verify already ran).
+**Symptom**: An earlier NPU revision mapped `-Action Install` to "all 21 phases" (full pipeline), while sister scripts mapped it to "Inst phases only" (assumes Prep + Verify already ran).
 
-**Fix**: Sister-script alignment refactor (r2) corrected `-Action Install` to Inst-only and added `-Action All` for the full pipeline. Workstation OS guard now fires on both `Install` and `All`.
+**Fix**: Sister-script alignment refactor corrected `-Action Install` to Inst-only and added `-Action All` for the full pipeline. Workstation OS guard now fires on both `Install` and `All`.
 
 ## D.5 ja-JP console encoding (chcp 932)
 
 **Symptom**: Japanese log strings garble on default ja-JP Windows console (code page 932, Shift-JIS), AND external tool output (CiTool.exe, modern signtool.exe) writing UTF-8 to stdout is mojibake when captured via `& tool | Out-String`.
 
-**Fix (Chipset r59 / Graphics r27 / NPU r9)**: P00 calls `Set-ConsoleUtf8` which enforces all three encodings ( `[Console]::OutputEncoding`, `[Console]::InputEncoding`, `$OutputEncoding`) to `[System.Text.Encoding]::UTF8`. Operators using `*>&1 | Tee-Object` must also set the file encoding explicitly. See §A.5 for the canonical implementation.
+**Fix**: P00 calls `Set-ConsoleUtf8` which enforces all three encodings ( `[Console]::OutputEncoding`, `[Console]::InputEncoding`, `$OutputEncoding`) to `[System.Text.Encoding]::UTF8`. Operators using `*>&1 | Tee-Object` must also set the file encoding explicitly. See §A.5 for the canonical implementation.
 
-**Pre-r57 / pre-r25 / pre-r6 history**: This SPEC entry was documented from the earliest revisions, but the implementation was missing. `Show-PowerShellEnvironment` displayed `Default Encoding: shift_jis (cp932)` / `Console OutputEnc.: shift_jis (cp932)` but no code path actually set them to UTF-8. The defect surfaced as `CiTool: 蜃ｦ逅・・謌仙粥縺励∪縺励◆` in I02 log output on ja-JP WS2025 hosts. See §D.16 for the full root-cause and verification trail.
+**Pre-fix history**: This SPEC entry was documented from the earliest revisions, but the implementation was missing. `Show-PowerShellEnvironment` displayed `Default Encoding: shift_jis (cp932)` / `Console OutputEnc.: shift_jis (cp932)` but no code path actually set them to UTF-8. The defect surfaced as `CiTool: 蜃ｦ逅・・謌仙粥縺励∪縺励◆` in I02 log output on ja-JP WS2025 hosts. See §D.16 for the full root-cause and verification trail.
 
 ## D.6 `-LiteralPath` not supported on `Invoke-WebRequest -OutFile` (PS 5.1)
 
@@ -1497,7 +1497,7 @@ Preserved verbatim across chipset / graphics / NPU scripts.
 
 **Fix**: Download to a wildcard-free temp filename (`<dir>\.dl_<GUID>.part`), then `Move-Item -LiteralPath` to the real destination. Pattern preserved in NPU script's `Invoke-NpuZipDownload`.
 
-## D.7 Code-signing certificate filename standardization (Chipset r48 / Graphics r17 / NPU r3)
+## D.7 Code-signing certificate filename standardization
 
 **Symptom**: Before the cross-script alignment commit, the three scripts used inconsistent code-signing certificate filenames:
 
@@ -1516,9 +1516,9 @@ This caused two operational problems:
 
 | Script | Post-fix filename | Path |
 | --- | --- | --- |
-| Chipset r48 | `AMD-Chipset-Driver-CodeSign.{pfx,cer}` | `C:\AMD-Chipset-WS\cert\` |
-| Graphics r17 | `AMD-Graphics-Driver-CodeSign.{pfx,cer}` | `C:\AMD-Graphics-WS\cert\` |
-| NPU r3 | `AMD-NPU-Driver-CodeSign.{pfx,cer}` | `C:\AMD-NPU-WS\cert\` |
+| Chipset | `AMD-Chipset-Driver-CodeSign.{pfx,cer}` | `C:\AMD-Chipset-WS\cert\` |
+| Graphics | `AMD-Graphics-Driver-CodeSign.{pfx,cer}` | `C:\AMD-Graphics-WS\cert\` |
+| NPU | `AMD-NPU-Driver-CodeSign.{pfx,cer}` | `C:\AMD-NPU-WS\cert\` |
 
 **Upgrade impact on existing deploys**:
 
@@ -1526,24 +1526,24 @@ This caused two operational problems:
 - Running `-Action Install` with the new script will generate a fresh PFX/CER under the new name; the old PFX/CER is then orphaned in the workspace.
 - For a clean upgrade, run `-Action Cleanup` on the old script revision **before** upgrading.
 
-## D.8 WDAC supplemental policy GUID standardisation (Chipset r48 / Graphics r17 / NPU pre-existing)
+## D.8 WDAC supplemental policy GUID standardisation
 
-**Symptom 1 (Chipset r47, Graphics r16 and earlier)**: The supplemental policy `PolicyID` was generated dynamically with `Set-CIPolicyIdInfo -ResetPolicyID`, producing a new GUID on every deploy. The GUID was persisted to `<workspace>\cert\AmdSuppPolicyId.txt` so that `Cleanup` could find it later.
+**Symptom 1 (Chipset / Graphics, before the fix)**: The supplemental policy `PolicyID` was generated dynamically with `Set-CIPolicyIdInfo -ResetPolicyID`, producing a new GUID on every deploy. The GUID was persisted to `<workspace>\cert\AmdSuppPolicyId.txt` so that `Cleanup` could find it later.
 
 This had two downsides:
 - A re-deploy did not replace the previous deploy's policy slot — it created a *new* slot with a new GUID, accumulating dormant `<oldGuid>.cip` files in `C:\Windows\System32\CodeIntegrity\CiPolicies\Active\`.
 - If `<workspace>\cert\AmdSuppPolicyId.txt` was lost (e.g. workspace deleted manually), `Cleanup` could not locate the deployed policy.
 
-**Symptom 2 (Graphics r16 and earlier only)**: The script used `SupplementsBasePolicyID = '{B355481F-55DA-5D17-C662-07127F674187}'`, a non-standard GUID that does **not** correspond to any Microsoft-shipped CI base policy. Almost certainly a copy-paste artefact from earlier development. The chipset and NPU scripts both correctly used the Windows-default `{A244370E-44C9-4C06-B551-F6016E563076}`. The Graphics supplemental policy was therefore "supplementing" a non-existent base, which Windows may load with a warning or silently ignore.
+**Symptom 2 (Graphics, before the fix)**: The script used `SupplementsBasePolicyID = '{B355481F-55DA-5D17-C662-07127F674187}'`, a non-standard GUID that does **not** correspond to any Microsoft-shipped CI base policy. Almost certainly a copy-paste artefact from earlier development. The chipset and NPU scripts both correctly used the Windows-default `{A244370E-44C9-4C06-B551-F6016E563076}`. The Graphics supplemental policy was therefore "supplementing" a non-existent base, which Windows may load with a warning or silently ignore.
 
-**Fix (r48 / r17 / r3)**:
+**Fix**:
 
 1. **Fixed default supplemental policy GUIDs** per script, unique per script so they coexist on a host with all three deployed:
    - Chipset: `503860EA-8837-4169-9BC4-19E5AEED721B`
    - Graphics: `85336828-3080-41C5-81EC-FD587DC090D3`
    - NPU: `8B2C4F12-1E9D-4D7B-A4F8-9C7E2B6A53D1` (pre-existing, unchanged)
 2. **Operator override** via `-WdacPolicyGuid <GUID>`, accepted with or without braces. Two use cases:
-   - **Legacy cleanup**: read the old PolicyId from `<workspace>\cert\AmdSuppPolicyId.txt` and pass it with `-Action Cleanup -WdacPolicyGuid <oldGuid>` to remove a pre-r48/r17 deploy. The new `Test-AmdWdacPolicyDeployed` also automatically falls back to reading the legacy marker file if the fixed GUID is not active, so unattended Cleanup on a legacy deploy still works without manual GUID lookup.
+   - **Legacy cleanup**: read the old PolicyId from `<workspace>\cert\AmdSuppPolicyId.txt` and pass it with `-Action Cleanup -WdacPolicyGuid <oldGuid>` to remove a legacy deploy. The new `Test-AmdWdacPolicyDeployed` also automatically falls back to reading the legacy marker file if the fixed GUID is not active, so unattended Cleanup on a legacy deploy still works without manual GUID lookup.
    - **Side-by-side**: deploy two copies of the same script with different GUIDs (rare).
 3. **Graphics-only fix**: default `SupplementsBasePolicyID` corrected from `{B355481F-...}` to the Microsoft standard `{A244370E-...}`. Overridable via `-WdacBasePolicyGuid` for environments with custom base CI policies.
 4. **Implementation detail**: PowerShell's `Set-CIPolicyIdInfo` has no `-PolicyId` switch; we patch the `<PolicyID>` element directly in the XML after `Set-CIPolicyIdInfo -SupplementsBasePolicyID …` (no longer pass `-ResetPolicyID`).
@@ -1552,53 +1552,53 @@ This had two downsides:
 
 ---
 
-## D.9 UEFI Secure Boot baseline feature (Chipset r49→r50 / Graphics r18→r19 / NPU r4→r5)
+## D.9 UEFI Secure Boot baseline feature
 
 **Summary**: A cross-cutting informational feature added to all three scripts that captures the host's UEFI Secure Boot certificate-rollout state and surfaces it at P00 / P05 (report appendix) / V05 (compact) / V06 (full section) / I02 (pre-check). See `A.14 UEFI Secure Boot Baseline` for the full design.
 
 **Iteration history**:
 
-| Revision | Change |
+| Phase | Change |
 |---|---|
-| Chipset r49 / Graphics r18 / NPU r4 | Initial implementation: 6 core functions + per-script helper + 5 integration points |
-| Chipset r49 (during validation) | Three corrective fixes applied before publishing: (a) `schtasks.exe /Query /FO CSV` returns localized headers on ja-JP hosts; replaced with `Get-ScheduledTask` for locale-independent state. (b) MS sample script's `[<>:"|?*]` regex rejects every absolute Windows path; added stdout-JSON fallback. (c) `Show-...` non-compact mode and V06 caller both printed `--- UEFI Secure Boot Baseline ---` banner; removed inner banner so V06 controls section numbering. |
-| Chipset r50 / Graphics r19 / NPU r4→r5 | Polish patch: removed `%TEMP%` fallback from P00 (diagnostic files always co-locate with `$Ctx.WorkRoot`); added `Get-OrEnsureSecureBootBaseline` helper that re-captures when the cached snapshot's diagnostic file is missing or outside the current workspace. |
+| Initial implementation | 6 core functions + per-script helper + 5 integration points |
+| Validation fixes | Three corrective fixes applied before publishing: (a) `schtasks.exe /Query /FO CSV` returns localized headers on ja-JP hosts; replaced with `Get-ScheduledTask` for locale-independent state. (b) MS sample script's `[<>:"|?*]` regex rejects every absolute Windows path; added stdout-JSON fallback. (c) `Show-...` non-compact mode and V06 caller both printed `--- UEFI Secure Boot Baseline ---` banner; removed inner banner so V06 controls section numbering. |
+| Polish patch | Removed `%TEMP%` fallback from P00 (diagnostic files always co-locate with `$Ctx.WorkRoot`); added `Get-OrEnsureSecureBootBaseline` helper that re-captures when the cached snapshot's diagnostic file is missing or outside the current workspace. |
 
 **Cross-script symmetry**: The 6 core functions (Get-SecureBootCertificateInventory / Get-MsSecureBootExampleScriptPath / Invoke-MsSecureBootDetectScript / Get-SecureBootBaselineSnapshot / Show-SecureBootBaselineSnapshot / Format-SecureBootBaselineForReport) are byte-identical across the four scripts (chipset / graphics / NPU / BthPan); BthPan reuses the chipset variant verbatim. Only the seventh `Get-OrEnsureSecureBootBaseline` helper differs (chipset/graphics: `param($Ctx)`; NPU: `param()` with script-scope access).
 
 ---
 
-## D.10 NPU r5 — `Find-Inf2CatPath` x64-filter bug
+## D.10 `Find-Inf2CatPath` x64-filter bug (NPU)
 
 **Summary**: NPU's `Find-Inf2CatPath` delegated to `Find-ToolPath` which filters discovered files to `\x64\` or `\amd64\` directories only. inf2cat.exe ships **exclusively as an x86 binary** under the Windows SDK/WDK tree (Microsoft has never produced an x64 build of this tool), so the filter always returned `$null` and NPU P02 then tried to install the WDK via winget — which itself does not publish the WDK as a winget package. The result was a hard P02 FAILED on every host that had inf2cat installed in the standard location.
 
 **Root cause**: Reuse of a generic `Find-ToolPath` helper whose architecture filter is correct for signtool (which has both x64 and x86 variants) but wrong for inf2cat (x86 only).
 
-**Fix (NPU r5)**: Replaced the body of `Find-Inf2CatPath` with an inline `Get-ChildItem ... -Recurse -Filter 'inf2cat.exe'` walk over the SDK bin roots, no architecture filter. Highest `FileVersion` wins. Matches the lookup logic implicit in the chipset / graphics scripts where inf2cat is also found correctly.
+**Fix**: Replaced the body of `Find-Inf2CatPath` with an inline `Get-ChildItem ... -Recurse -Filter 'inf2cat.exe'` walk over the SDK bin roots, no architecture filter. Highest `FileVersion` wins. Matches the lookup logic implicit in the chipset / graphics scripts where inf2cat is also found correctly.
 
 **Scope**: NPU-only; chipset and graphics scripts use a different inf2cat discovery path.
 
 ---
 
-## D.11 NPU r5 — `NpuOverride` `[ValidateSet]` excludes empty string
+## D.11 `NpuOverride` `[ValidateSet]` excludes empty string (NPU)
 
 **Summary**: At script load, PowerShell logged `値  は NpuOverride 変数の有効な値ではないため、変数を検証できません` (and English equivalent) from the line `$Script:NpuOverride = $NpuOverride`. The warning fired because `[ValidateSet('PHX','HPT','STX','KRK')]` on `[string]$NpuOverride` rejects the default empty string when the variable is re-evaluated at the script-scope assignment. The warning was non-fatal (the script continued past it) but noisy and confusing.
 
-**Fix (NPU r5)**: Added `''` to the ValidateSet: `[ValidateSet('','PHX','HPT','STX','KRK')]`. The empty value represents "no override; auto-detect via Get-AmdNpuPlatform", which matches the prior default behaviour.
+**Fix**: Added `''` to the ValidateSet: `[ValidateSet('','PHX','HPT','STX','KRK')]`. The empty value represents "no override; auto-detect via Get-AmdNpuPlatform", which matches the prior default behaviour.
 
 **Scope**: NPU-only.
 
 ---
 
-## D.12 Chipset r54 — InstallShield SFX extraction for AMD 8.x+ installers
+## D.12 InstallShield SFX extraction for AMD 8.x+ installers (Chipset)
 
-**Summary**: Starting with AMD Chipset Software 8.x (8.02.18.557, observed May 2026), the installer bootstrapper changed to a two-layer wrapper: an outer NSIS SFX wrapping an inner InstallShield SFX (`ISSetupStream` format). 7-Zip can decode the outer layer but exits cleanly (exit 0) on the inner layer with no payload, so the script's pre-r54 two-strategy extraction (7-Zip + launch-and-watch) silently produced an incomplete result.
+**Summary**: Starting with AMD Chipset Software 8.x (8.02.18.557, observed May 2026), the installer bootstrapper changed to a two-layer wrapper: an outer NSIS SFX wrapping an inner InstallShield SFX (`ISSetupStream` format). 7-Zip can decode the outer layer but exits cleanly (exit 0) on the inner layer with no payload, so the script's earlier two-strategy extraction (7-Zip + launch-and-watch) silently produced an incomplete result.
 
 **Observed symptom (X13 Gen 1 / Ryzen 5 PRO 4650U / WS2025, May 2026)**: After P04 ExtractInstaller succeeded, P05 AnalyzeInfs reported only 2 INFs in the extract tree (`AmsMailbox.inf` + `AmdAppCompat.inf`) instead of the expected ~32. I04 PostInstallVerify reported 42 unmatched AMD devices in Device Manager.
 
 **Root cause**: The AMD 8.x inner installer is `ISSetupStream`-formatted. 7-Zip's `PE` handler matches the SFX EXE shell and returns exit 0, but only extracts the EXE's resource-section files — none of the 35 sub-MSIs reach the destination tree. Strategy 1's `_HasPayload` guard noticed this and triggered Strategy 2 (launch + watch), which is fragile: AMD's installer aggressively cleans up `C:\AMD\` after extraction, often before the watcher can grab the files.
 
-**Fix (Chipset r54)**: New Strategy 2/3 inserted between the old 7-Zip and launch-watch strategies. The new strategy:
+**Fix**: New Strategy 2/3 inserted between the old 7-Zip and launch-watch strategies. The new strategy:
 
 1. 7-Zips the outer NSIS shell to a staging directory (the outer layer remains 7-Zip-extractable).
 2. Locates the inner `AMD_Chipset_Drivers.exe` (InstallShield SFX).
@@ -1610,13 +1610,13 @@ After Strategy 2 succeeds, the existing P05 / P06 / I03 pipeline picks up the fu
 
 **Scope**: Chipset only. Graphics and NPU installers use different formats (Graphics is a WIX BURN bootstrapper, NPU is a plain ZIP) and don't need this strategy.
 
-**Renoir-specific note**: Even with the r54 fix, X13 Gen 1 will see ~27 of the 35 INF packages remain "no device" because their Hardware IDs target Phoenix Point and later CPUs. The ~5-8 packages that DO match real devices are the meaningful coverage improvement. This is expected and documented in B.1's "35 sub-MSIs" table.
+**Renoir-specific note**: Even with the AMD 8.x fix, X13 Gen 1 will see ~27 of the 35 INF packages remain "no device" because their Hardware IDs target Phoenix Point and later CPUs. The ~5-8 packages that DO match real devices are the meaningful coverage improvement. This is expected and documented in B.1's "35 sub-MSIs" table.
 
 ---
 
-## D.13 Chipset r55 / Graphics r23 — Workspace lock leaked across runs in the same PowerShell console
+## D.13 Workspace lock leaked across runs in the same PowerShell console (Chipset / Graphics)
 
-> **Note (post-r58 / r26)**: The error message shown below references the pre-relocation workspace path (`C:\AMD-Chipset-WS`) because that is what r55 emitted at the time. From r58 / r26, the equivalent message would show `C:\Temp\Workspace_AMD-Chipset` instead. The mechanism described and the fix are unchanged.
+> **Note**: The error message shown below references the pre-relocation workspace path (`C:\AMD-Chipset-WS`) because that is what an earlier chipset revision emitted at the time. Currently, the equivalent message shows `C:\Temp\Workspace_AMD-Chipset` instead. The mechanism described and the fix are unchanged.
 
 **Symptom**: Running the chipset (or graphics) script with `-Action PrepareVerify` and then immediately re-running it (with the same or a different `-Action`) in the **same interactive PowerShell console** failed at P01 with:
 
@@ -1631,23 +1631,23 @@ The PID shown (3088) was the PID of the PowerShell host process itself, not of a
 
 **Root cause**: The workspace lock file (`<WorkRoot>\.markers\RUN.lock`) was written by `Set-WorkspaceLock` in P01 with the current `$PID`. Cleanup relied solely on a `Register-EngineEvent -SourceIdentifier PowerShell.Exiting` action; this event only fires when the PowerShell **host process** terminates, not when a script returns. In an interactive console (where the host is reused for many script invocations) the lock therefore leaked. Run 2 then ran `Test-WorkspaceLockHeld`, found the leftover lock with PID=3088, called `Get-Process -Id 3088` (which returned the PowerShell host itself), and incorrectly concluded that "another instance is running".
 
-The Graphics script had the same code pattern with the same defect (file-locally numbered r19 → r22; the catch-up bump to r23 includes this fix). The NPU script does not have a workspace lock and is unaffected (it uses script scope rather than `$Ctx.Paths.Markers`).
+The Graphics script had the same code pattern with the same defect. The NPU script does not have a workspace lock and is unaffected (it uses script scope rather than `$Ctx.Paths.Markers`).
 
-**Fix (Chipset r55 / Graphics r23)**: Two complementary changes (defense-in-depth):
+**Fix**: Two complementary changes (defense-in-depth):
 
 1. **Self-PID detection in `Test-WorkspaceLockHeld`** — if the recorded PID in the lock file equals the current `$PID`, the lock is classified as `Stale` with a new `SelfPid=$true` field. `Assert-NoConcurrentRun` then silently supersedes it with an informational `[+] Reusing workspace lock from earlier run in this PowerShell session` message instead of the loud "stale lock" warning intended for crashed prior runs.
 
 2. **`try { ... } finally { Clear-WorkspaceLock ... }` around the main phase loop** — the existing top-level `foreach ($phase in $queue) { ... }` and the run summary block are now wrapped in `try { ... } finally { ... }`. The `finally` calls `Clear-WorkspaceLock -Ctx $Ctx` so the lock file is removed on every exit path (normal completion, phase throw, top-level error). The inner cleanup uses an intentionally empty `catch { }` annotated with `# psa-disable-line PSA3004 -- intentional best-effort cleanup in finally; a failure here must not mask the original exception`.
 
-The two changes are complementary: `try/finally` prevents the lock from leaking on every exit path going forward; the self-PID detection handles the historic case where a pre-r55 / pre-r23 leftover lock is encountered, and any future case where a hard `Stop-Process`/`Ctrl-C` bypasses `finally` entirely.
+The two changes are complementary: `try/finally` prevents the lock from leaking on every exit path going forward; the self-PID detection handles the historic case where a legacy leftover lock is encountered, and any future case where a hard `Stop-Process`/`Ctrl-C` bypasses `finally` entirely.
 
 **Scope**: Chipset and Graphics. The NPU script does not implement a workspace lock and is intentionally exempt — see SPEC §A.1.4 cross-script consistency check rules (the lock is not on the cross-script-mandatory list).
 
 ---
 
-## D.14 Chipset r55 — Per-tool installer logs leaked to workspace root
+## D.14 Per-tool installer logs leaked to workspace root (Chipset)
 
-> **Note (post-r58)**: The workspace paths shown in this section use the pre-r58 layout (`C:\AMD-Chipset-WS\`) because that is the path the bug actually surfaced under in r55. From r58, the workspace lives at `C:\Temp\Workspace_AMD-Chipset\` instead; the substring after the workspace root (`installshield-admin.log`, `msiexec-admin-*.log`) is unchanged. See SPEC §A.1.4 for the relocation.
+> **Note**: The workspace paths shown in this section use the legacy layout (`C:\AMD-Chipset-WS\`) because that is the path the bug actually surfaced under originally. Currently, the workspace lives at `C:\Temp\Workspace_AMD-Chipset\` instead; the substring after the workspace root (`installshield-admin.log`, `msiexec-admin-*.log`) is unchanged. See SPEC §A.1.4 for the relocation.
 
 **Symptom**: After running `-Action PrepareVerify` on a clean Windows Server 2025 host, the workspace root (`C:\AMD-Chipset-WS\`) contained the following loose log files alongside the documented subdirectory layout (`download\`, `extracted\`, `patched\`, `cert\`, `logs\`, `.markers\`):
 
@@ -1667,15 +1667,15 @@ C:\AMD-Chipset-WS\msiexec-admin-AMD-UART-Driver.log
 C:\AMD-Chipset-WS\msiexec-admin-AMD-USB_Filter-Driver.log
 ```
 
-The workspace already had a `logs\` subdirectory used by P08 (inf2cat), P09 (signtool), V03 (signtool verify), and I03 (pnputil) — but the InstallShield admin install and the per-sub-MSI msiexec admin installs added in r54 did not route their logs there.
+The workspace already had a `logs\` subdirectory used by P08 (inf2cat), P09 (signtool), V03 (signtool verify), and I03 (pnputil) — but the InstallShield admin install and the per-sub-MSI msiexec admin installs added for AMD 8.x did not route their logs there.
 
-**Root cause**: `Expand-AmdInstaller_ViaInstallShield` (r54-new) computed `$parentDir = Split-Path $DestinationPath -Parent`. Because the caller (`Invoke-PrepPhase04_ExtractInstaller`) passed `$Ctx.Paths.Extract` (= `<WorkRoot>\extracted`) as `$DestinationPath`, `$parentDir` resolved to `<WorkRoot>` itself. Both `$isLog` and the per-sub-MSI `$subLog` were then computed as `Join-Path $parentDir <filename>`, dropping every log file in the workspace root.
+**Root cause**: `Expand-AmdInstaller_ViaInstallShield` (introduced for AMD 8.x) computed `$parentDir = Split-Path $DestinationPath -Parent`. Because the caller (`Invoke-PrepPhase04_ExtractInstaller`) passed `$Ctx.Paths.Extract` (= `<WorkRoot>\extracted`) as `$DestinationPath`, `$parentDir` resolved to `<WorkRoot>` itself. Both `$isLog` and the per-sub-MSI `$subLog` were then computed as `Join-Path $parentDir <filename>`, dropping every log file in the workspace root.
 
-**Fix (Chipset r55)**: New optional `[string]$LogDir` parameter on `Expand-AmdInstaller` and `Expand-AmdInstaller_ViaInstallShield`. The downstream function resolves a `$logRoot` variable: if the caller passed a `$LogDir` (and the directory exists or can be created), `$logRoot` is set to `$LogDir`; otherwise `$logRoot` falls back to the legacy `$parentDir` for backwards compatibility. Both `$isLog` and `$subLog` are then computed against `$logRoot`. The caller (`Invoke-PrepPhase04_ExtractInstaller`) was updated to pass `-LogDir $Ctx.Paths.Logs`. Existing P08/P09/V03/I03 log files are unaffected (they already wrote to `$Ctx.Paths.Logs`).
+**Fix**: New optional `[string]$LogDir` parameter on `Expand-AmdInstaller` and `Expand-AmdInstaller_ViaInstallShield`. The downstream function resolves a `$logRoot` variable: if the caller passed a `$LogDir` (and the directory exists or can be created), `$logRoot` is set to `$LogDir`; otherwise `$logRoot` falls back to the legacy `$parentDir` for backwards compatibility. Both `$isLog` and `$subLog` are then computed against `$logRoot`. The caller (`Invoke-PrepPhase04_ExtractInstaller`) was updated to pass `-LogDir $Ctx.Paths.Logs`. Existing P08/P09/V03/I03 log files are unaffected (they already wrote to `$Ctx.Paths.Logs`).
 
 **Effect on workspace layout**:
 
-| File                                  | Pre-r55 location | Post-r55 location          |
+| File                                  | Pre-fix location | Post-fix location          |
 | ------------------------------------- | ---------------- | -------------------------- |
 | `installshield-admin.log`             | `<WorkRoot>\`    | `<WorkRoot>\logs\`         |
 | `msiexec-admin-<sub-MSI>.log` (×12)   | `<WorkRoot>\`    | `<WorkRoot>\logs\`         |
@@ -1691,19 +1691,19 @@ The workspace already had a `logs\` subdirectory used by P08 (inf2cat), P09 (sig
 
 ---
 
-## D.15 Chipset r56 / Graphics r24 — Driver-category priority override (BREAKING) + Write-Detail helper
+## D.15 Driver-category priority override (BREAKING) + Write-Detail helper (Chipset / Graphics)
 
 **Summary**: Two coupled changes shipped together in a single commit.
 
 ### 1. BREAKING: category-priority override in install decision
 
-**Symptom (pre-r56 / pre-r24)**: On a clean-installed Windows Server 2025 host where Windows had bound its in-box generic drivers (`machine.inf`, `pci.inf`, `hdaudbus.inf`, `cpu.inf`, `display.inf`, etc.) to AMD hardware, V05 / V06 / I03 routinely classified the patched AMD drivers as `SKIP-newer` and refused to install them. The cause is fundamental: Microsoft generic drivers use **OS-build versioning** (e.g. `10.0.26100.1150`) which numerically dominates AMD's **semantic versioning** (e.g. `1.0.47.1`, `5.43.0.0`). Pure version comparison therefore *never* replaces a Microsoft generic with an AMD-vendor driver.
+**Symptom (before the fix)**: On a clean-installed Windows Server 2025 host where Windows had bound its in-box generic drivers (`machine.inf`, `pci.inf`, `hdaudbus.inf`, `cpu.inf`, `display.inf`, etc.) to AMD hardware, V05 / V06 / I03 routinely classified the patched AMD drivers as `SKIP-newer` and refused to install them. The cause is fundamental: Microsoft generic drivers use **OS-build versioning** (e.g. `10.0.26100.1150`) which numerically dominates AMD's **semantic versioning** (e.g. `1.0.47.1`, `5.43.0.0`). Pure version comparison therefore *never* replaces a Microsoft generic with an AMD-vendor driver.
 
-Reported example from a r55/r23 clean WS2025 install (Renoir / Ryzen 5 PRO 4650U):
+Reported example from a clean WS2025 install (Renoir / Ryzen 5 PRO 4650U):
 - `標準電源管理コントローラー` (Standard Power Management Controller) was bound to MS `machine.inf v10.0.26100.1150`. The patched `AmdMicroPEP.inf v1.0.47.1` was correctly classified as `[C] Self-signed` and the device was in scope, but I03 logged `SKIPPED (current driver is same/newer; skipping to avoid downgrade)`.
 - `マルチメディア コントローラー` (Multimedia Controller) had `[?] Unknown` driver and the patched `amdacpbus.inf` was likewise skipped because `Compare-InfDriverVer` returned 0 on the empty version string.
 
-**Fix (r56 / r24)**: Replaced the pure-version comparison in `Resolve-PerDeviceDriverDecision` and `Resolve-PerInfInstallDecision` with a **category-priority override**:
+**Fix**: Replaced the pure-version comparison in `Resolve-PerDeviceDriverDecision` and `Resolve-PerInfInstallDecision` with a **category-priority override**:
 
 ```
 Priority order (high -> low):
@@ -1720,7 +1720,7 @@ Because the TO-BE driver produced by this pipeline is always `[C]` (the patched 
 
 This is implemented via `Get-DriverSourceCategory -Provider $cur.Provider -Signer $cur.Signer` called at the start of each decision function; the resulting `.Code` is checked against `'C'` before any `Compare-InfDriverVer` call.
 
-**Why this is a BREAKING change**: Previously the pipeline preserved AMD's official `[B]` Vendor drivers when they were the same or newer than the patched `[C]` Self-signed counterpart. Under r56/r24 those `[B]` drivers are also replaced. The operator-facing implication:
+**Why this is a BREAKING change**: Previously the pipeline preserved AMD's official `[B]` Vendor drivers when they were the same or newer than the patched `[C]` Self-signed counterpart. Under the current install-decision logic those `[B]` drivers are also replaced. The operator-facing implication:
 
 - **Pro**: the documented behavior of "AMD self-signed drivers on AMD hardware" is now achievable on a clean Server 2025 install in a single `-Action All` run.
 - **Con**: any AMD vendor driver previously installed via Windows Update / OEM site will be overwritten by the script's self-signed version of the *same* underlying driver binaries (only the signature publisher changes). If the operator wanted to preserve a vendor driver, they must run `-Action PrepareVerify` first, inspect V06 Section 2, and decide whether to proceed.
@@ -1733,7 +1733,7 @@ This is implemented via `Get-DriverSourceCategory -Provider $cur.Provider -Signe
 
 **Symptom**: An audit of the chipset script counted 165 occurrences of bare `Write-Host "    ..."` (4-space indented plain text) and the graphics script 154, used in `Show-PowerShellEnvironment`, `Show-SecureBootBaselineSnapshot`, P03 platform inventory, P04 nested-MSI listing, P05 INF inventory table, V05 Dry-Run output, V06 hardware-impact rows, and I00 review. Each call duplicated the indent string and had no central control over color or alignment, making future column-layout tweaks impossible without touching every call site.
 
-**Fix (r56 / r24)**: Introduced `Write-Detail` immediately after `Write-Skip` in the output helper section:
+**Fix**: Introduced `Write-Detail` immediately after `Write-Skip` in the output helper section:
 
 ```powershell
 function Write-Detail {
@@ -1754,11 +1754,11 @@ A one-off Python conversion script (`convert_writehost.py`) was used to mechanic
 
 **Documented as the sanctioned exception**: SPEC §A.5 was updated to list `Write-Detail` as the single approved continuation-line helper. Bare `Write-Host "    ..."` is now a SPEC violation.
 
-**Scope**: Chipset and Graphics. The NPU script (r6 baseline) did not have the same accretion of bare `Write-Host` indentation patterns (audit count: 0) and was not modified at that revision; NPU r7 (2026-05-17) introduces console UTF-8 enforcement and CiTool `--json` but does not change the Write-Host pattern profile.
+**Scope**: Chipset and Graphics. The NPU script did not have the same accretion of bare `Write-Host` indentation patterns (audit count: 0) and was not modified at that revision; a later NPU revision introduces console UTF-8 enforcement and CiTool `--json` but does not change the Write-Host pattern profile.
 
-### 3. psa.py baseline drift after r56 / r24
+### 3. psa.py baseline drift after the Write-Detail conversion
 
-The mechanical conversion added ~1 trailing-semicolon info finding per file. Baseline as of r56 / r24 (re-measured for r57 / r25 / r7 in §D.16 below):
+The mechanical conversion added ~1 trailing-semicolon info finding per file. Baseline at that point (re-measured later in §D.16 below):
 
 | Script | Errors | Warnings | Info | Total |
 | ------ | -----: | -------: | ---: | ----: |
@@ -1769,7 +1769,7 @@ The mechanical conversion added ~1 trailing-semicolon info finding per file. Bas
 
 ---
 
-## D.16 Chipset r59 / Graphics r27 / NPU r9 — CiTool.exe interactive ENTER prompt + Console UTF-8 enforcement
+## D.16 CiTool.exe interactive ENTER prompt + Console UTF-8 enforcement
 
 **Symptom (reported on a clean Windows Server 2025 Datacenter / ja-JP)**: Running `-Action Install` on the chipset and graphics scripts produced a hang of roughly 60-75 seconds in I02 (AuthorizeDriverSigning) between the two log lines:
 
@@ -1804,13 +1804,13 @@ I.e. `--json` (or `-j`) instructs CiTool to emit machine-readable JSON **and** s
 1. **CiTool.exe blocks on stdin without `--json`.** All `CiTool.exe --update-policy <cip>` and `CiTool.exe --remove-policy <id>` invocations in `Install-AmdWdacPolicy` / `Uninstall-AmdWdacPolicy` were missing the flag, so each one stalled until the operator pressed ENTER.
 2. **Console encoding stayed at cp932.** SPEC §A.5 / §D.5 mandated `[Console]::OutputEncoding = UTF8` but the implementation only *displayed* the current encoding in `Show-PowerShellEnvironment` and never actually set it. The byproduct was that CiTool's UTF-8 stdout was decoded as cp932 (`処理が成功しました` → `蜃ｦ逅・・謌仙粥縺励∪縺励◆`).
 
-**Fix (r57 / r25 / r7)**:
+**Fix**:
 
 1. **CiTool `--json` flag applied at all 6 call sites** (3 update + 3 remove across Chipset / Graphics / NPU). Output is parsed with `ConvertFrom-Json`; the canonical status line (`OperationResult` / `Status` / `PolicyGUID`) is extracted for `Write-Detail` display, with a raw-stdout fallback when JSON parsing fails.
 
 2. **`Set-ConsoleUtf8` helper added next to `Set-Tls12` (chipset/graphics) / `Set-NetworkProtocol` (NPU)** and called from P00 immediately after TLS setup. Wraps `[Console]::OutputEncoding` / `InputEncoding` / `$OutputEncoding` assignments in `try/catch` for redirected-host compatibility.
 
-3. **I02 output migrated to `Write-Detail`** for the activation method and CiTool status lines (sweep miss from r56 / r24 Write-Detail conversion). Re-classified as a sub-fix under §A.5 compliance.
+3. **I02 output migrated to `Write-Detail`** for the activation method and CiTool status lines (sweep miss from the prior Write-Detail conversion). Re-classified as a sub-fix under §A.5 compliance.
 
 **Verification commands the operator can run to confirm the fix locally** (no script execution required):
 
@@ -1830,9 +1830,9 @@ Copy-Item $tmpCip "$env:windir\System32\CodeIntegrity\CiPolicies\Active\verify_t
 
 **Scope**: All three scripts. The same one-line `--json` addition applies to NPU's `Install-WdacPolicy` / `Remove-WdacPolicy` (parallel-named NPU functions; same intent).
 
-**psa.py baseline impact (r57 / r25 / r7)**: The Set-ConsoleUtf8 + CiTool/JSON parse blocks add a small number of trailing-semicolon `PSA4004` info findings. Re-measure after merge:
+**psa.py baseline impact**: The Set-ConsoleUtf8 + CiTool/JSON parse blocks add a small number of trailing-semicolon `PSA4004` info findings. Re-measure after merge:
 
-| Script | Errors | Warnings | Info | Total | Delta vs r56/r24/r6 |
+| Script | Errors | Warnings | Info | Total | Delta vs prior baseline |
 | ------ | -----: | -------: | ---: | ----: | --- |
 | `Deploy-AMDChipsetDriverOnWindowsServer.ps1`  | **0** | TBD | TBD | TBD | TBD |
 | `Deploy-AMDGraphicsDriverOnWindowsServer.ps1` | **0** | TBD | TBD | TBD | TBD |
@@ -1842,11 +1842,11 @@ The baseline numbers will be updated to specific values in the commit message of
 
 ---
 
-## D.17 Chipset r57 / Graphics r25 — pnputil exit=259 reclassification
+## D.17 pnputil exit=259 reclassification (Chipset / Graphics)
 
 **Symptom**: On a clean Windows Server 2025 install, the chipset script's I03 summary reported `52 ok (2 need reboot) / 3 failed`, but the I04 PostInstallVerification immediately afterwards reported `FAILED: 0` and listed the same three devices under `REBOOT_NEEDED`. The summary classification was inconsistent.
 
-**Affected INFs (chipset only)**: `SMBUSamd.inf`, `AMDInterface.inf`, `AmdMicroPEP.inf`. Each had a sibling copy under a different source path (e.g. `Chipset_Software\SMBus Driver\W11x64\` vs `SMBus Driver\W11x64\` — see SPEC §B.1 r54 "OS variant selection logic"), so `pnputil.exe /add-driver` was invoked twice with effectively the same package contents. The first call returned `exit=0` (or `3010` for reboot-required) and queued the new driver. The second call returned `exit=259` because the driver store now already contained an equivalent package.
+**Affected INFs (chipset only)**: `SMBUSamd.inf`, `AMDInterface.inf`, `AmdMicroPEP.inf`. Each had a sibling copy under a different source path (e.g. `Chipset_Software\SMBus Driver\W11x64\` vs `SMBus Driver\W11x64\` — see SPEC §B.1 "AMD 8.x installer architecture / OS variant selection logic"), so `pnputil.exe /add-driver` was invoked twice with effectively the same package contents. The first call returned `exit=0` (or `3010` for reboot-required) and queued the new driver. The second call returned `exit=259` because the driver store now already contained an equivalent package.
 
 **Investigation (verification trail, 2026-05-17)**: The pnputil logs for the three exit=259 cases on WS2025 read:
 
@@ -1871,7 +1871,7 @@ $isSuccess      = ($exit -eq 0 -or $exit -eq 3010)   # exit=259 fell into the fa
 
 mapped exit=259 to `failed`. I04's PostInstallVerification reads the actual device state and correctly inferred `REBOOT_NEEDED` (because the first sibling-INF call had queued the binding), creating the I03/I04 divergence.
 
-**Fix (r57 / r25)**: Reclassify exit=259 as a third success status:
+**Fix**: Reclassify exit=259 as a third success status:
 
 ```powershell
 $rebootRequired = ($exit -eq 3010)
@@ -1905,7 +1905,7 @@ Driver install: {ok} ok ({reboot} need reboot, {noop} no-op) / {failed} failed /
 | `259` (`ERROR_NO_MORE_ITEMS`) | Driver package already present in store; no new package added | Success (no-op) |
 | any other non-zero | Real failure (signature rejection, ACL, etc.) | Failure |
 
-**Operator-facing implication**: The pre-r57 / pre-r25 logs that show "3 failed" on chipset Install runs are NOT actually failures — they are duplicate-INF no-ops. The post-r57 / post-r25 logs will report the same scenarios as `no-op (already present)` and the failure count will be 0.
+**Operator-facing implication**: Pre-fix logs that show "3 failed" on chipset Install runs are NOT actually failures — they are duplicate-INF no-ops. The current (post-fix) logs will report the same scenarios as `no-op (already present)` and the failure count will be 0.
 
 ---
 
@@ -1913,13 +1913,13 @@ Driver install: {ok} ok ({reboot} need reboot, {noop} no-op) / {failed} failed /
 
 If you are creating a 5th script (e.g. `Deploy-AMDRocmRuntimeOnWindowsServer.ps1`):
 
-1. Copy the most recent existing script (NPU r9 is the freshest sister-aligned reference) as your starting template.
+1. Copy the most recent existing script (the NPU script is the freshest sister-aligned reference) as your starting template.
 2. Replace `$Script:ScriptName`, `$Script:ScriptVersion`, `$Script:ScriptTag`, `$Script:CertSubjectCn`, `$Script:WdacPolicyName`, `$Script:WdacPolicyGuid`, `$Script:WorkRoot` with values specific to your new script.
 3. Re-implement only the **domain helpers** section (platform detection, installer resolution, INF inventory filter). Reuse all other sections verbatim.
 4. Run `python3 psa.py <new-script>.ps1` (see A.11 for setup) until 0 errors.
 5. Add B.5 section to this SPEC.md.
 6. Add the new script to `README.md` "What's in the box" table, "Parameters" section, "Risk classification" table — and sync `README.ja.md`.
 7. Add a physical-hardware validation scenario to `TESTING.md` covering the target AMD consumer devices for your new script.
-8. Add a CHANGELOG.md entry for the new script's r1 release.
+8. Add a CHANGELOG.md entry for the new script's initial release.
 
 The goal of the strict sister-script convention is exactly this: a new script should be ~80% boilerplate inheritance and ~20% novel logic.

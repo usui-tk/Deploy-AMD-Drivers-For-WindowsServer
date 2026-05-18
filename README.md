@@ -91,7 +91,7 @@ For the full at-your-own-risk acknowledgements (BitLocker, anti-cheat software, 
 | `Deploy-AMDChipsetDriverOnWindowsServer.ps1` | Chipset driver pipeline (GPIO, SMBus, PSP, MicroPEP, PMF, etc.). Source: AMD Chipset Software ~75 MB EXE, ~67 INFs. | **Stable** — validated on M75q Tiny Gen 2 (WS2025) and X13 Gen 1 AMD (Win11 LTSC 2024). |
 | `Deploy-AMDGraphicsDriverOnWindowsServer.ps1` | Graphics driver pipeline (Display, HD Audio, Audio CoProcessor, ACP, USB-C UCSI, etc.). Source: AMD Adrenalin Edition ~600 MB EXE, ~19 INFs (Vega-Polaris Legacy branch) or ~67 INFs (Main Adrenalin branch for Phoenix+). | **Stable** — same validation hosts as chipset. |
 | **`Deploy-AMDNpuDriverOnWindowsServer.ps1`** | **NPU (Ryzen AI XDNA) driver pipeline (PHX/HPT/STX/KRK).** Source: AMD Ryzen AI Software ZIP, ~250 MB, EULA-gated download (no public direct URL). Kernel-mode driver only — does NOT install Ryzen AI Software user-mode stack. | **🆘 Experimental / research-grade — NOT production-ready.** No physical-NPU validation runs have been performed. AMD account auto-download is best-effort and may break with AMD form changes. Ryzen AI Software is officially unsupported on Windows Server 2025. |
-| `Deploy-MSBthPanInboxOnWindowsServer.ps1` | **Microsoft inbox Bluetooth PAN driver (`bthpan.inf` / `bthpan.sys`) enablement pipeline.** Source: the host's own `C:\Windows\System32\DriverStore\FileRepository\bthpan.inf_amd64_*` directory — **no remote download required.** Single INF, single HWID (`BTH\MS_BTHPAN`). Distinguishes Phantom OK (bth.inf proxy match) from true resolution (Class=Net, Service=BthPan) on Windows Server. | **New** (r1) — initial release. Logic shares the same Phase / Secure Boot / WDAC framework as the AMD scripts; INF patch surface is much smaller (1 INF, 1 HWID). Physical validation on ThinkPad + Intel AX210 + WS2025 build 26100.32860 is the planned first test target. |
+| `Deploy-MSBthPanInboxOnWindowsServer.ps1` | **Microsoft inbox Bluetooth PAN driver (`bthpan.inf` / `bthpan.sys`) enablement pipeline.** Source: the host's own `C:\Windows\System32\DriverStore\FileRepository\bthpan.inf_amd64_*` directory — **no remote download required.** Single INF, single HWID (`BTH\MS_BTHPAN`). Distinguishes Phantom OK (bth.inf proxy match) from true resolution (Class=Net, Service=BthPan) on Windows Server. | **New** — initial release. Logic shares the same Phase / Secure Boot / WDAC framework as the AMD scripts; INF patch surface is much smaller (1 INF, 1 HWID). Physical validation on ThinkPad + Intel AX210 + WS2025 build 26100.32860 is the planned first test target. |
 | `README.md` | This document (English; the master). |  |
 | `README.ja.md` | Japanese translation of `README.md`, kept in sync. |  |
 | `SPEC.md` | Developer specification (per-script details, INF parsing strategy, WDAC policy structure). **English only.** |  |
@@ -100,35 +100,25 @@ For the full at-your-own-risk acknowledgements (BitLocker, anti-cheat software, 
 | `CONTRIBUTING.md` | How to file issues, propose changes, and run regression tests. **English only.** |  |
 | `LICENSE` | MIT License. |  |
 
-All four PowerShell scripts share the same 21-phase architecture, the same self-signing model, and the same WDAC authorisation path. They write to separate workspaces (`C:\Temp\Workspace_AMD-Chipset`, `C:\Temp\Workspace_AMD-Graphics`, `C:\Temp\Workspace_AMD-NPU`, `C:\Temp\Workspace_Microsoft-BthPan`) and use separate self-signed certificates + separate WDAC supplemental policy GUIDs so they never collide. From Chipset r59 / Graphics r27 / NPU r9 / BthPan r9, all four workspaces are relocated under `C:\Temp\Workspace_*` for cluster-and-purge convenience; the script auto-creates `C:\Temp` on demand.
+All four PowerShell scripts share the same 21-phase architecture, the same self-signing model, and the same WDAC authorisation path. They write to separate workspaces (`C:\Temp\Workspace_AMD-Chipset`, `C:\Temp\Workspace_AMD-Graphics`, `C:\Temp\Workspace_AMD-NPU`, `C:\Temp\Workspace_Microsoft-BthPan`) and use separate self-signed certificates + separate WDAC supplemental policy GUIDs so they never collide. All four workspaces sit under `C:\Temp\Workspace_*` for cluster-and-purge convenience; the script auto-creates `C:\Temp` on demand.
 
 ---
 
 ## What's new
 
 See [CHANGELOG.md](./CHANGELOG.md) for the chronological per-release entry log
-(every revision from r1 onward, organised by date and by script). For the
-architectural rationale behind individual fixes, see
+organised by date and by script — this is the single source of truth for
+what the main branch ships at any given moment. For the architectural
+rationale behind individual fixes, see
 [SPEC.md Part D](./SPEC.md#part-d--known-pitfalls--lessons-learned).
-
-The latest release at the time of writing is
-**Chipset r61 / Graphics r29 / NPU r12 / BthPan r11** (2026-05-18), a
-cross-script consistency pass that brings every script to the psa.py
-baseline. The Debug Trace Facility (SECTION 1b) introduced in the previous
-release (r59 / r27 / r9 / r9, 2026-05-17) remains the headline feature.
-
-As of an [Unreleased] config-only update on the same date, `.psa.config.json`
-opts in to the new opt-in revision-discipline rules `PSAP0003` and
-`PSAP0004` (introduced in `psa.py` 3.3.0). All four scripts remain at
-0 errors / 0 warnings / 0 info under this stricter configuration.
 
 ## Risk classification of the four scripts
 
 > This section exists because the NPU script is materially riskier than its sister scripts and operators must understand the difference before running it. The BthPan script is the lowest-risk of the four because its driver source is the host's own DriverStore (no remote download), the INF surface is exactly one file with one HWID, and Microsoft itself signs the inbox driver — only the catalog must be re-signed.
 
-| Aspect | Chipset script (r61) | Graphics script (r29) | **NPU script (r12)** | **BthPan script (r11)** |
+| Aspect | Chipset script | Graphics script | **NPU script** | **BthPan script** |
 | --- | --- | --- | --- | --- |
-| **Maturity** | Stable, multiple validation cycles | Stable, multiple validation cycles | **🆘 Experimental — first release, not validated on physical NPU hardware** | **New (r1)** — initial release. Logic shares the proven Phase / Secure Boot / WDAC framework. Single-INF surface is small enough that physical validation is feasible in one session. |
+| **Maturity** | Stable, multiple validation cycles | Stable, multiple validation cycles | **🆘 Experimental — not yet validated on physical NPU hardware** | **New** — initial release. Logic shares the proven Phase / Secure Boot / WDAC framework. Single-INF surface is small enough that physical validation is feasible in one session. |
 | **Distribution format** | Public EXE direct download | Public EXE direct download | **EULA-gated ZIP, requires AMD account** | **No download** — `bthpan.inf` is already staged at `C:\Windows\System32\DriverStore\FileRepository\bthpan.inf_amd64_*` on every Windows install. |
 | **Public download URL** | Yes (direct) | Yes (direct) | **No — requires AMD account login + EULA acceptance per release** | **N/A — driver is on the host.** |
 | **AMD account auto-download** | N/A | N/A | **Best-effort; depends on AMD's form HTML staying stable; can break without notice** | **N/A.** |
@@ -546,8 +536,8 @@ All four scripts share a common parameter contract for `-Action`, `-OnlyPhases`,
 | `-CleanWorkRoot`           | (off)                | Delete the workspace directory before starting (forces a fresh download/extract/copy)             |
 | `-AllowWorkstationInstall` | (off)                | Permit Install-phase actions on Workstation OS (Win11). Discouraged — default blocks Install      |
 | `-UseTestSigning`          | (off)                | Fall back to `bcdedit /set testsigning on` instead of WDAC supplemental policy. Discouraged       |
-| `-WorkRoot`                | per-script           | Override workspace path (chipset: `C:\Temp\Workspace_AMD-Chipset`, graphics: `C:\Temp\Workspace_AMD-Graphics`, NPU: `C:\Temp\Workspace_AMD-NPU`, BthPan: `C:\Temp\Workspace_Microsoft-BthPan`). r58+ / r26+ / r8+ / r2+: relocated under `C:\Temp\Workspace_*`; the script auto-creates `C:\Temp` on demand |
-| `-LogFile`                 | `''` (disabled)      | (r58+ / r26+ / r8+ / r2+) Optional path to capture the full console transcript via `Start-Transcript` / `Stop-Transcript`. The file receives every stream (Output / Host / Error / Warning / Verbose / Debug) as plain text; the interactive console keeps its `Write-Host -ForegroundColor` decoration intact. Recommended over the legacy `... \|*>&1 \| Tee-Object -FilePath ...` idiom, which strips Write-Host coloring. Suggested filename: `C:\Temp\<tag>_<Action>_<yyyyMMdd-HHmmss>.log` |
+| `-WorkRoot`                | per-script           | Override workspace path (chipset: `C:\Temp\Workspace_AMD-Chipset`, graphics: `C:\Temp\Workspace_AMD-Graphics`, NPU: `C:\Temp\Workspace_AMD-NPU`, BthPan: `C:\Temp\Workspace_Microsoft-BthPan`). Located under `C:\Temp\Workspace_*`; the script auto-creates `C:\Temp` on demand |
+| `-LogFile`                 | `''` (disabled)      | Optional path to capture the full console transcript via `Start-Transcript` / `Stop-Transcript`. The file receives every stream (Output / Host / Error / Warning / Verbose / Debug) as plain text; the interactive console keeps its `Write-Host -ForegroundColor` decoration intact. Recommended over the legacy `... \|*>&1 \| Tee-Object -FilePath ...` idiom, which strips Write-Host coloring. Suggested filename: `C:\Temp\<tag>_<Action>_<yyyyMMdd-HHmmss>.log` |
 | `-PfxPassword`             | per-script           | Password for the self-signed PFX (chipset/graphics/BthPan: `'ChangeMe!2026'`, NPU: `''`)          |
 | `-WdacPolicyGuid`          | per-script (fixed UUID v4) | Override the fixed WDAC supplemental policy GUID. Default is per-script (chipset: `503860EA-…`, graphics: `85336828-…`, NPU: `8B2C4F12-…`, BthPan: `A6E72D4F-3B98-4C5A-9E1D-7F8B2A4C6E5D`). Used for legacy-deploy cleanup or side-by-side multi-instance deploy |
 
@@ -699,21 +689,21 @@ Every line written by the scripts follows a structured, time-stamped format that
 | `[X]`  | Red       | Fail     | `[X] Top-level error: AMD NPU not detected`                      |
 | `[~]`  | DarkGray  | Skip     | `[~] Inventory CSV: C:\Temp\Workspace_AMD-NPU\inf_inventory.csv` |
 
-Continuation lines that sit inside a section-banner table (PowerShell environment dump, OS profile, Secure Boot baseline, INF inventory rows, V05 / V06 / I00 sub-blocks) are rendered via the `Write-Detail` helper, which emits a 4-space-indented line with no timestamp or marker prefix. This is the single sanctioned exception to the "every line has a marker" rule. Operators reading raw logs should treat any 4-space-indented line as visually subordinate to the most recent marker line above it. (Introduced in chipset r56 / graphics r24; see SPEC §A.5.)
+Continuation lines that sit inside a section-banner table (PowerShell environment dump, OS profile, Secure Boot baseline, INF inventory rows, V05 / V06 / I00 sub-blocks) are rendered via the `Write-Detail` helper, which emits a 4-space-indented line with no timestamp or marker prefix. This is the single sanctioned exception to the "every line has a marker" rule. Operators reading raw logs should treat any 4-space-indented line as visually subordinate to the most recent marker line above it. (See SPEC §A.5.)
 
 ### Sample output (NPU script, P00 → P03)
 
 ```
 ========================================================================
  Deploy-AMDNpuDriverOnWindowsServer
- Version: npu-2026.05.17-r9  [npu-r9-debug-trace-facility-instrumentation-resume-ctx-autolog]  SHA256: e0ca465680db
+ Version: npu-<yyyy.MM.dd>-r<NN>  [<short-kebab-tag>]  SHA256: <12-hex-chars>
  Action : PrepareVerify
  Repo   : https://github.com/usui-tk/Deploy-Drivers-For-WindowsServer
 ========================================================================
 
 ========================================================================
  PHASE P00 - Initialize                 (Prep  )  start: 14:23:05
- script: npu-2026.05.17-r9/e0ca465680db
+ script: npu-<yyyy.MM.dd>-r<NN>/<hash12>
 ========================================================================
 [14:23:05]            [*] Running environment and sanity checks
 [14:23:05]            [+] Administrator privileges confirmed.
@@ -741,7 +731,7 @@ The phase header banner (`=` × 72, Magenta) is emitted by the dispatcher; phase
 
 ## Run log capture (`-LogFile`)
 
-From Chipset r59 / Graphics r27 / NPU r9 / BthPan r9, all four scripts expose a `-LogFile <path>` parameter that captures the full console transcript via `Start-Transcript` / `Stop-Transcript`:
+All four scripts expose a `-LogFile <path>` parameter that captures the full console transcript via `Start-Transcript` / `Stop-Transcript`:
 
 ```powershell
 # Recommended: color is preserved in the console, the file gets every stream as plain text
@@ -891,7 +881,7 @@ By running these scripts, you acknowledge:
 
 7. **The 5-year cert expiry is real.** Schedule a renewal task in your calendar for year 4.5 of any production deployment, or accept that drivers stop installing in year 5.
 
-8. **Driver-category priority override (chipset r56 / graphics r24 — BREAKING change).** From these revisions the script's install-decision logic ranks self-signed drivers ([C]) above hardware-vendor drivers ([B]) and Microsoft generic drivers ([A]), regardless of driver version. On a clean WS2025 install this is exactly the intent — Microsoft's in-box generics will be replaced by AMD-vendor drivers carrying the script's signature. The trade-off is that any AMD-vendor driver already installed via Windows Update or an OEM package will *also* be overwritten by the script's self-signed equivalent (the binaries are the same; only the publisher differs). If you want to preserve a vendor driver, run `-Action PrepareVerify` first, inspect V06 Section 2, and decide whether to proceed. See SPEC §D.15 for the full rationale.
+8. **Driver-category priority override (BREAKING change).** The script's install-decision logic ranks self-signed drivers ([C]) above hardware-vendor drivers ([B]) and Microsoft generic drivers ([A]), regardless of driver version. On a clean WS2025 install this is exactly the intent — Microsoft's in-box generics will be replaced by AMD-vendor drivers carrying the script's signature. The trade-off is that any AMD-vendor driver already installed via Windows Update or an OEM package will *also* be overwritten by the script's self-signed equivalent (the binaries are the same; only the publisher differs). If you want to preserve a vendor driver, run `-Action PrepareVerify` first, inspect V06 Section 2, and decide whether to proceed. See SPEC §D.15 for the full rationale.
 
 9. **NPU script (`Deploy-AMDNpuDriverOnWindowsServer.ps1`) is markedly higher-risk than its sister scripts.** Specifically:
    - **No physical-NPU validation** has been performed by the maintainers as of this writing. All testing has been static analysis with `psa.py` and code-review of the AMD-published `quicktest.py` detection logic translated to PowerShell.
@@ -950,15 +940,15 @@ Run `pnputil /scan-devices` to force a re-enumeration. If still bound to MS, the
 
 ### "I02 appears to hang for 60+ seconds between 'Converting XML to .cip binary...' and 'Deployed:' lines"
 
-**Pre-r57 / pre-r25 / pre-r6 only.** CiTool.exe was invoked without the `--json` flag and printed "続行するには、Enter キーを押してください" (Press Enter to Exit) to the console, blocking the script on stdin. Pressing ENTER in the active console window resumed the script. This is fixed in chipset r59 / graphics r27 / NPU r9 by passing `--json` to all CiTool.exe invocations, which suppresses the interactive prompt per Microsoft's CiTool design (the `--json` flag documents itself as "出力を json として書式設定し、入力を抑制する"). Upgrade the script and the hang will no longer occur. See SPEC §D.16 for the full root-cause analysis.
+**Historical defect (now fixed in current mainline).** CiTool.exe was invoked without the `--json` flag and printed "続行するには、Enter キーを押してください" (Press Enter to Exit) to the console, blocking the script on stdin. Pressing ENTER in the active console window resumed the script. This is fixed by passing `--json` to all CiTool.exe invocations, which suppresses the interactive prompt per Microsoft's CiTool design (the `--json` flag documents itself as "出力を json として書式設定し、入力を抑制する"). Upgrade the script and the hang will no longer occur. See SPEC §D.16 for the full root-cause analysis.
 
 ### "CiTool log line shows mojibake like '蜃ｦ逅・・謌仙粥縺励∪縺励◆'"
 
-**Pre-r57 / pre-r25 / pre-r6 only.** This is the UTF-8 byte sequence of `処理が成功しました` interpreted as cp932 (Shift-JIS). CiTool.exe writes UTF-8 to stdout, but PowerShell decoded it using the default ja-JP `[Console]::OutputEncoding` (cp932). SPEC §A.5 / §D.5 mandated UTF-8 enforcement at P00 but the implementation was missing. Fixed in chipset r59 / graphics r27 / NPU r9 via `Set-ConsoleUtf8` at P00. See SPEC §D.16.
+**Historical defect (now fixed in current mainline).** This is the UTF-8 byte sequence of `処理が成功しました` interpreted as cp932 (Shift-JIS). CiTool.exe writes UTF-8 to stdout, but PowerShell decoded it using the default ja-JP `[Console]::OutputEncoding` (cp932). SPEC §A.5 / §D.5 mandated UTF-8 enforcement at P00 but the implementation was missing. Fixed via `Set-ConsoleUtf8` at P00. See SPEC §D.16.
 
 ### "I03 says '3 failed' but I04 says 'Failed: 0' on the same install run"
 
-**Pre-r57 / pre-r25 only.** I03's classification logic treated pnputil `exit=259` (`ERROR_NO_MORE_ITEMS`) as a failure, but I04's PostInstallVerification reads the actual device state and correctly identifies these as `REBOOT_NEEDED` (when a sibling-INF first install already queued the binding) or as no-op (driver package already in store). The exit=259 cases are typically from duplicate-source INFs (e.g. `Chipset_Software\SMBus Driver\W11x64\SMBUSamd.inf` and `SMBus Driver\W11x64\SMBUSamd.inf` are both visited by I03, the second returns 259). Fixed in chipset r57 / graphics r25: the new I03 summary reports four categories — `ok` / `need reboot` / `no-op` / `failed` — and exit=259 maps to the new `no-op (already present)` status (Write-Skip / DarkGray). See SPEC §D.17.
+**Historical defect (now fixed in current mainline).** I03's classification logic treated pnputil `exit=259` (`ERROR_NO_MORE_ITEMS`) as a failure, but I04's PostInstallVerification reads the actual device state and correctly identifies these as `REBOOT_NEEDED` (when a sibling-INF first install already queued the binding) or as no-op (driver package already in store). The exit=259 cases are typically from duplicate-source INFs (e.g. `Chipset_Software\SMBus Driver\W11x64\SMBUSamd.inf` and `SMBus Driver\W11x64\SMBUSamd.inf` are both visited by I03, the second returns 259). The current I03 summary reports four categories — `ok` / `need reboot` / `no-op` / `failed` — and exit=259 maps to the `no-op (already present)` status (Write-Skip / DarkGray). See SPEC §D.17.
 
 ### NPU script "I04 shows the device is bound but Ryzen AI Software won't initialize"
 
@@ -1055,7 +1045,7 @@ python3 path/to/psa.py --config ./.psa.config.json \
     Deploy-MSBthPanInboxOnWindowsServer.ps1
 ```
 
-All four scripts MUST be passed in a single invocation for PSA8001 cross-file analysis to work; with a single file PSA8001 has no peers to compare against and emits nothing. The baseline as of r60 / r28 / r10 / r10 is **0 errors / 0 warnings / 0 info**.
+All four scripts MUST be passed in a single invocation for PSA8001 cross-file analysis to work; with a single file PSA8001 has no peers to compare against and emits nothing. See [`CHANGELOG.md`](./CHANGELOG.md) for the current verified baseline.
 
 Exit codes: `0` = clean, `1` = warnings only, `2` = errors. Useful in CI:
 
@@ -1087,7 +1077,7 @@ For the full developer specification — including phase architecture rules, ban
 
 - **Part A — Common Specification.** Reusable rules across the four scripts (phase architecture, banner / log markers, parameter conventions, error handling, CSV column conventions, path-handling rules). Pick this up first if you are extending any of the four scripts or adding a fifth.
 - **Part B — Script-specific Specifications.** One section per script (Chipset / Graphics / NPU) documenting the unique platform-detection logic, INF inventory filters, installer source resolution tiers, and known platform quirks.
-- **Part C — Quality Gates & Lessons Learned.** What `psa.py` checks for, what regression tests `TESTING.md` covers, and the historical fixes (e.g. timezone-induced DriverDate false positives in chipset r46) that are baked into the current implementation.
+- **Part C — Quality Gates & Lessons Learned.** What `psa.py` checks for, what regression tests `TESTING.md` covers, and the historical fixes (e.g. timezone-induced DriverDate false positives in an earlier chipset revision) that are baked into the current implementation.
 
 If you are adding a new feature, the recommended workflow is: read `SPEC.md` → read the relevant script's existing `Invoke-*Phase*_*` functions → make changes → run `python3 psa.py <script>.ps1` (after obtaining it per [Development tools](#development-tools)) → update `TESTING.md` with any new regression scenarios.
 
@@ -1183,4 +1173,4 @@ Additional community documents:
 
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) — Expected behaviour when interacting through Issues, Pull Requests, and Security Advisories. Tailored to the safety implications of self-signed kernel-mode drivers.
 - [`SECURITY.md`](./SECURITY.md) — How to report security-impacting defects (driver-signing flaws, WDAC policy scope errors, credential exposure). **Do NOT file these as public Issues** — use the private Security Advisory channel instead.
-- [`CHANGELOG.md`](./CHANGELOG.md) — Chronological per-release change log (every revision from r1 onward, organised by date and by script).
+- [`CHANGELOG.md`](./CHANGELOG.md) — Chronological per-release change log, organised by date and by script.
