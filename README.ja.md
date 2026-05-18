@@ -985,20 +985,20 @@ python3 psa.py Deploy-AMDNpuDriverOnWindowsServer.ps1
 
 #### 実施チェック
 
-`psa.py` v3.2.0 は `PSA1001`〜`PSA9002` の汎用ルールに加え、 プロジェクト・パイプライン規約ルール `PSAP0001`〜`PSAP0002` を含む **34 ルール体系** を 9 カテゴリに分けて実装しています:
+`psa.py` (latest mainline) は `PSA1001`〜`PSA9002` の汎用ルールに加え、 プロジェクト・パイプライン規約ルール `PSAP0001`〜`PSAP0004` を含む **36 ルール体系** を 9 カテゴリに分けて実装しています。 本レポジトリは latest mainline の `psa.py` に対して検証する方針です (特定バージョンへの固定はしません)。 方針の根拠と「新しい `psa.py` への追従」 LLM / AI ワークフローについては `SPEC.md` §A.11 *Version policy* を参照してください。 36 ルールは以下 9 カテゴリに分類されます:
 
 | カテゴリ                                | コード範囲                | 例                                                                                                                                                                                                                                              |
 | --------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 構文の整合性                            | `PSA1001`〜`PSA1003`      | 中括弧 / 丸括弧 / 角括弧のバランス                                                                                                                                                                                                              |
 | 意味解析                                | `PSA2001`〜`PSA2006`      | 未定義変数、 自動変数の shadowing、 bare `$variable` に対する `-match`、 `$null` を `-eq`/`-ne` の右辺に置く問題、 条件式内の代入 / リダイレクト                                                                                                |
-| コーディングパターン                    | `PSA3001`〜`PSA3005`      | `Start-Process -ArgumentList`、 空行直前の trailing backtick、 空文字列に対する `-match`、 空 `catch` ブロック、 **3.2.0 新規:** `Start-Transcript -Path` ではなく `-LiteralPath` を使うべき                                                    |
+| コーディングパターン                    | `PSA3001`〜`PSA3005`      | `Start-Process -ArgumentList`、 空行直前の trailing backtick、 空文字列に対する `-match`、 空 `catch` ブロック、 `Start-Transcript -Path` ではなく `-LiteralPath` を使うべき                                                                  |
 | 衛生                                    | `PSA4001`〜`PSA4004`      | 未完了マーカー (TODO / FIXME / XXX / HACK)、 行末空白、 長い行、 行末セミコロン                                                                                                                                                                 |
 | セキュリティ                            | `PSA5001`〜`PSA5004`      | 平文パスワードパラメーター、 `Invoke-Expression`、 壊れたハッシュアルゴリズム、 `ComputerName` ハードコード                                                                                                                                     |
 | ベストプラクティス                      | `PSA6001`〜`PSA6006`      | 非承認動詞、 コマンドレットエイリアス、 複数形名詞の関数名、 `$global:` 定義、 必須パラメーターのデフォルト値、 `$true` がデフォルトのスイッチパラメーター                                                                                      |
 | ファイルフォーマット                    | `PSA7001`                 | `.ps1` の UTF-8 BOM 欠落 (BOM が無いと Windows PowerShell 5.1 ja-JP は Shift-JIS / cp932 にフォールバック)                                                                                                                                      |
-| **新規: ファイル間整合性**              | `PSA8001`                 | 同一スキャン対象内における function body のハッシュ drift 検出 — 共有ヘルパー関数 (`Format-Elapsed`、 `Write-Detail`、 `Start-DebugTrace` ファミリ等) が 4 つのパイプラインスクリプト間で byte レベルで同期しつづけることを enforce              |
-| **新規: 複雑度メトリクス**              | `PSA9001`〜`PSA9002`      | 関数行数の閾値超過 (デフォルト OFF、 `max_function_lines` で調整可)、 `$LASTEXITCODE` チェック無しの外部プロセス呼出し (デフォルト OFF)                                                                                                          |
-| **新規: プロジェクト・パイプライン規約** | `PSAP0001`〜`PSAP0002`    | phase 関数命名規約 (`Invoke-(Prep\|Verify\|Inst)PhaseNN_Name`)、 必須スクリプト識別子変数 (`$Script:ScriptVersion` / `$Script:ScriptHash` / `$Script:ScriptShortTag`) の存在。 **PSAPxxxx ルールはすべてデフォルト OFF**; `.psa.config.json` で opt-in する |
+| ファイル間整合性                        | `PSA8001`                 | 同一スキャン対象内における function body のハッシュ drift 検出 — 共有ヘルパー関数 (`Format-Elapsed`、 `Write-Detail`、 `Start-DebugTrace` ファミリ等) が 4 つのパイプラインスクリプト間で byte レベルで同期しつづけることを enforce              |
+| 複雑度メトリクス                        | `PSA9001`〜`PSA9002`      | 関数行数の閾値超過 (デフォルト OFF、 `max_function_lines` で調整可)、 `$LASTEXITCODE` チェック無しの外部プロセス呼出し (デフォルト OFF)                                                                                                          |
+| プロジェクト・パイプライン規約          | `PSAP0001`〜`PSAP0004`    | phase 関数命名規約 (`Invoke-(Prep\|Verify\|Inst)PhaseNN_Name`)、 必須スクリプト識別子変数 (`$Script:ScriptVersion` / `$Script:ScriptHash` / `$Script:ScriptShortTag`)、 **3.3.0 新規:** インライン `# rNN:` リビジョンタグコメント (`PSAP0003`)、 ファイル末尾の `REVISION HISTORY` ブロック (`PSAP0004`)。 **PSAPxxxx ルールはすべてデフォルト OFF**; 本レポジトリは `.psa.config.json` で 4 つすべてに opt-in |
 
 各ルールの正規仕様は、[ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts) レポジトリの [`scripts/python/powershell-static-analyzer/SPEC.md`](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/SPEC.md) §4 (英語のみ) を参照。
 
@@ -1006,7 +1006,7 @@ python3 psa.py Deploy-AMDNpuDriverOnWindowsServer.ps1
 
 本レポジトリではルート直下に専用の `.psa.config.json` を同梱しています。 これは **4 つのパイプラインスクリプトに対する正規の設定** であり、 以下 3 点を実施します:
 
-1. **`PSAP0001` および `PSAP0002` を opt-in**。 21 phase 命名規約 (`Invoke-(Prep|Verify|Inst)PhaseNN_DescriptiveName`) およびスクリプト識別子の三連 (`$Script:ScriptVersion` / `ScriptHash` / `ScriptShortTag`) の存在を強制。
+1. **`PSAP0001` / `PSAP0002` / `PSAP0003` / `PSAP0004` を opt-in**。 21 phase 命名規約 (`Invoke-(Prep|Verify|Inst)PhaseNN_DescriptiveName`)、 スクリプト識別子の三連 (`$Script:ScriptVersion` / `ScriptHash` / `ScriptShortTag`)、 およびリビジョン規律 (インライン `# rNN:` タグ禁止、 スクリプト内 `REVISION HISTORY` ブロック禁止 — リビジョン履歴は `CHANGELOG.md` に集約) のすべてを強制。
 
 2. **`PSA8001` (ファイル間 function body drift) の設定**。 `psa8001_ignore_functions` でスクリプト固有な関数 (phase 関数 (regex 一括)、 各ドライバファミリ固有のヘルパー、 `Show-Help` 等) 約 45 個を除外。 ここに記載されていない共有ヘルパーは 4 スクリプト間で byte 一致が必須。
 

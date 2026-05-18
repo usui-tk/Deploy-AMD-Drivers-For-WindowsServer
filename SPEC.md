@@ -98,7 +98,7 @@ When extending these scripts, **copy these helpers verbatim** from the most rece
 psa.py  (obtained from the canonical artifact repository — see A.11)
 ```
 
-`psa.py` is a **pure Python** static analyzer (no PowerShell installation required), currently at version **3.3.0**, with a 36-rule check set spanning `PSA1001`..`PSA9002` plus the project-convention family `PSAP0001`..`PSAP0004`. It is **not** bundled in this repository. It is maintained as a single canonical artifact at:
+`psa.py` is a **pure Python** static analyzer (no PowerShell installation required) with a **36-rule** check set spanning `PSA1001`..`PSA9002` plus the project-convention family `PSAP0001`..`PSAP0004`. The repository policy is to validate against the **latest mainline** `psa.py` from the canonical repository (see §A.11 for the rationale and workflow). It is **not** bundled in this repository. It is maintained as a single canonical artifact at:
 
 ```
 https://github.com/usui-tk/ai-generated-artifacts/tree/main/scripts/python/powershell-static-analyzer/psa.py
@@ -596,6 +596,66 @@ Then hard-fails if `<5.1` or if not 64-bit.
 
 ## A.11 Static Analysis with psa.py
 
+### Version policy
+
+The repository validates its PowerShell scripts against the **latest mainline** `psa.py` from the canonical repository. Pinning to a fixed SemVer (e.g. "I tested with `psa.py` 3.3.0") is **not supported** as a development or CI strategy:
+
+- New `psa.py` releases may add opt-in rules (the `PSAPxxxx` family) that surface previously-hidden discipline violations.
+- New `psa.py` releases may tighten heuristics for existing rules.
+- A previously-clean codebase under an older `psa.py` is **not** evidence of correctness under the current `psa.py`. It must be re-validated.
+
+This SPEC, `TESTING.md`, `CONTRIBUTING.md`, and `README.md` therefore avoid pinning `psa.py` to a specific version number in forward-looking text. References to a specific version are acceptable only in `CHANGELOG.md` (which is rNN/version-by-design and records *which* `psa.py` version produced *which* baseline) and in `psa.py`'s own `CHANGELOG.md`.
+
+#### How to discover the current mainline version
+
+The canonical source of truth for "what is the current `psa.py` version on mainline" is the `VERSION` file sitting next to `psa.py` in the canonical repository:
+
+```
+ai-generated-artifacts/scripts/python/powershell-static-analyzer/
+├── psa.py        ← __version__ string inside
+├── VERSION       ← single ASCII line, no leading 'v', terminating LF
+├── SPEC.md
+├── CHANGELOG.md
+└── README.md
+```
+
+Three equivalent retrieval methods (any of them works; pick the one that fits your environment):
+
+```bash
+# Method 1 — remote HTTP GET, no clone, no Python (recommended for CI / one-off checks).
+LATEST=$(curl -sSL https://raw.githubusercontent.com/usui-tk/ai-generated-artifacts/main/scripts/python/powershell-static-analyzer/VERSION)
+echo "Latest psa.py on mainline: $LATEST"
+
+# Method 2 — already cloned (e.g., sister repository checkout next to this one).
+LATEST=$(cat /path/to/ai-generated-artifacts/scripts/python/powershell-static-analyzer/VERSION)
+
+# Method 3 — invoke a local copy of psa.py (requires Python).
+LATEST=$(python3 /path/to/psa.py --version | awk '{print $2}')
+```
+
+The three methods MUST agree: `psa.py` runs a startup self-check that compares its `__version__` against the sibling `VERSION` file and warns to stderr if they differ.
+
+#### LLM / AI workflow for adopting a new version
+
+When an LLM / AI maintainer (or a human) is about to make changes to **any** of the four PowerShell scripts in this repository, the very first step of the development cycle MUST be:
+
+1. **Fetch the current mainline version**: run Method 1 above to get `LATEST`.
+2. **Compare with the local copy actually being used**: read `__version__` from the local `psa.py`, or run `python3 /path/to/local/psa.py --version`. Call this `LOCAL`.
+3. **If `LATEST != LOCAL`**:
+   1. Replace `psa.py` AND its sibling `VERSION` file from mainline (both files MUST move together):
+      ```bash
+      curl -sSL https://raw.githubusercontent.com/usui-tk/ai-generated-artifacts/main/scripts/python/powershell-static-analyzer/psa.py -o psa.py
+      curl -sSL https://raw.githubusercontent.com/usui-tk/ai-generated-artifacts/main/scripts/python/powershell-static-analyzer/VERSION -o VERSION
+      ```
+   2. Read the new entries in the canonical [`psa.py` `CHANGELOG.md`](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/CHANGELOG.md) and the current canonical [`psa.py` `SPEC.md`](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/SPEC.md) to understand what changed (new rules, tightened heuristics, schema changes).
+   3. Re-evaluate this repository's `.psa.config.json` `enable` list against the latest `psa.py` `SPEC.md`. Newly-added opt-in rules that match the four pipeline scripts' discipline goals SHOULD be enabled (this repository currently opts in to all four PSAPxxxx rules).
+   4. Re-run the full static-analysis pass for all four scripts under the new `psa.py`. Treat any new findings as regressions to be addressed in the same change set, not as findings to be deferred.
+4. **If `LATEST == LOCAL`**: proceed with the planned change, but still re-run the analyzer on the modified scripts before declaring done.
+
+This workflow makes the "latest mainline" rule machine-actionable: an LLM that has read this section can derive a deterministic sequence of `curl`, comparison, fetch, and re-test steps for any task that touches PowerShell code in this repository.
+
+For the full policy rationale and additional context, see the [psa.py Versioning Policy](https://github.com/usui-tk/ai-generated-artifacts/blob/main/README.md#psapy-versioning-policy) section of the canonical repository's `README.md`.
+
 ### Canonical source
 
 `psa.py` is **not bundled in this repository**. It is maintained as a single canonical artifact in a separate repository:
@@ -664,9 +724,9 @@ python3 psa.py --severity error Deploy-AMDChipsetDriverOnWindowsServer.ps1
 # Exit code 0 = no errors. Warnings and info do not gate the build.
 ```
 
-### Rule coverage (psa.py v3.3.0 — 36 rules)
+### Rule coverage (36 rules)
 
-`psa.py` v3.3.0 ships with a **36-rule** check set grouped into **nine categories**. The PSA8xxx, PSA9xxx, and PSAPxxxx families were added in 3.2.0; PSAP0003 and PSAP0004 were added in 3.3.0. The older PSA1xxx–PSA7xxx families are unchanged in scope.
+`psa.py` ships with a **36-rule** check set grouped into **nine categories**. The PSA8xxx, PSA9xxx, and PSAPxxxx families were added in 3.2.0; PSAP0003 and PSAP0004 were added in 3.3.0. The older PSA1xxx–PSA7xxx families are unchanged in scope. (See the canonical [psa.py `CHANGELOG.md`](https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/CHANGELOG.md) for the full per-version history; this repository validates against the latest mainline — see the Version policy subsection above.)
 
 | Category                                  | Code range            | Examples                                                                                                                                                                                                                                                              |
 | ----------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

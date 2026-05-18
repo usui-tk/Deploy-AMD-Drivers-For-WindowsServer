@@ -109,6 +109,36 @@ independently.
   the current baseline; the opt-in ensures that any future commit
   re-introducing inline revision tags or in-script history blocks will
   be flagged by the static-analysis gate.
+- **Documentation: `psa.py` references aligned to the "latest mainline"
+  policy.** Forward-looking text in `SPEC.md`, `README.md`,
+  `README.ja.md`, `TESTING.md`, and `.psa.config.json` no longer pins
+  `psa.py` to a specific SemVer (previously written as `v3.3.0`); they
+  now describe `psa.py` as "latest mainline" and direct readers to the
+  authoritative `VERSION` file in the canonical
+  [ai-generated-artifacts](https://github.com/usui-tk/ai-generated-artifacts)
+  repository.
+   - `SPEC.md` §A.11 gained a new *Version policy* subsection that
+     codifies the rationale (new opt-in rules may surface previously-
+     hidden discipline violations; tightened heuristics may reclassify
+     previously-clean code) and the canonical LLM / AI workflow for
+     adopting a new `psa.py` version (fetch `VERSION` via `curl`,
+     compare against local, replace `psa.py` + `VERSION` together if
+     they differ, re-evaluate `.psa.config.json` against the new
+     `psa.py` `SPEC.md`, re-run the full static-analysis pass).
+   - `README.ja.md` was simultaneously brought back into sync with
+     `README.md`'s rule coverage table: it previously documented the
+     pre-3.3.0 state (34 rules, `PSAP0001`..`PSAP0002`) and is now
+     updated to the current state (36 rules, `PSAP0001`..`PSAP0004`).
+   - Version-specific references that record historical fact remain
+     intact: which `psa.py` version introduced which rule (e.g.
+     "`PSAP0003` / `PSAP0004` added in 3.3.0"), and which baseline was
+     verified under which `psa.py` version, are still recorded
+     verbatim in `CHANGELOG.md` and in the configuration's
+     introductory comments.
+   - No PowerShell script bodies were modified;
+     `$Script:ScriptVersion` / `$Script:ScriptTag` are unchanged;
+     `psa.py` (current mainline) baseline of 0 / 0 / 0 across all
+     four scripts is preserved.
 
 ### Removed
 

@@ -1007,7 +1007,7 @@ In the rest of this document and in `SPEC.md` / `TESTING.md` / `CONTRIBUTING.md`
 
 #### Checks performed
 
-`psa.py` v3.3.0 ships with a **36-rule** check set spanning `PSA1001`..`PSA9002` for generic rules plus `PSAP0001`..`PSAP0004` for project / pipeline convention rules, grouped into nine categories:
+`psa.py` (latest mainline) ships with a **36-rule** check set spanning `PSA1001`..`PSA9002` for generic rules plus `PSAP0001`..`PSAP0004` for project / pipeline convention rules. This repository validates its scripts against the latest mainline `psa.py` (no fixed-version pinning); see `SPEC.md` §A.11 *Version policy* for the rationale and the LLM / AI workflow for adopting a new version. The 36 rules are grouped into nine categories:
 
 | Category                       | Code range                | Examples                                                                                                                                                                                                                                       |
 | ---                            | ---                       | ---                                                                                                                                                                                                                                            |
