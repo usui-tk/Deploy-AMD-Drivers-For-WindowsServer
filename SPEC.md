@@ -875,7 +875,9 @@ Each README must include:
 3. Test on real AMD consumer hardware    ← per TESTING.md (chipset/graphics: physical
                                             Ryzen host with target devices; NPU script:
                                             physical Ryzen AI machine — see TESTING.md §3)
-4. Update README (en + ja) + SPEC (en + ja) if behavior changed
+4. Update README.md + README.ja.md if behavior changed (per A.12, only the README
+   is bilingual; other docs are English only). Update SPEC.md / TESTING.md /
+   CHANGELOG.md (all English only) as appropriate.
 5. Commit with revision number bump in $Script:ScriptVersion
 ```
 
