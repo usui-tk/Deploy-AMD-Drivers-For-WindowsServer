@@ -20,6 +20,32 @@ independently.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- `.psa.config.json` now opts in to the new opt-in revision-discipline
+  rules `PSAP0003` (inline `# rNN:` revision-tag comments) and `PSAP0004`
+  (end-of-file `REVISION HISTORY` comment blocks) introduced in
+  `psa.py` 3.3.0. Both rules report 0 hits across all four scripts at
+  the current baseline; the opt-in ensures that any future commit
+  re-introducing inline revision tags or in-script history blocks will
+  be flagged by the static-analysis gate.
+
+### Verified
+
+The current baseline against `psa.py` 3.3.0 with this updated config:
+
+| Script | Standard rules | + PSAP0003 / PSAP0004 |
+|--------|----------------|----------------------|
+| `Deploy-AMDChipsetDriverOnWindowsServer.ps1` | 0 / 0 / 0 | 0 / 0 / 0 |
+| `Deploy-AMDGraphicsDriverOnWindowsServer.ps1` | 0 / 0 / 0 | 0 / 0 / 0 |
+| `Deploy-AMDNpuDriverOnWindowsServer.ps1` | 0 / 0 / 0 | 0 / 0 / 0 |
+| `Deploy-MSBthPanInboxOnWindowsServer.ps1` | 0 / 0 / 0 | 0 / 0 / 0 |
+
+No PowerShell source changes are required; this is a configuration-only
+change. The four scripts remain at their respective r60 / r28 / r10 /
+r10 revisions.
+
 ## [2026-05-18] — Chipset r60 / Graphics r28 / NPU r10 / BthPan r10
 
 **Cross-script consistency pass + psa.py 3.2.0 integration.** No new

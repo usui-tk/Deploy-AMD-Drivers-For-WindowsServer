@@ -113,9 +113,14 @@ architectural rationale behind individual fixes, see
 
 The latest release at the time of writing is
 **Chipset r60 / Graphics r28 / NPU r10 / BthPan r10** (2026-05-18), a
-cross-script consistency pass that brings every script to the psa.py 3.2.0
+cross-script consistency pass that brings every script to the psa.py
 baseline. The Debug Trace Facility (SECTION 1b) introduced in the previous
 release (r59 / r27 / r9 / r9, 2026-05-17) remains the headline feature.
+
+As of an [Unreleased] config-only update on the same date, `.psa.config.json`
+opts in to the new opt-in revision-discipline rules `PSAP0003` and
+`PSAP0004` (introduced in `psa.py` 3.3.0). All four scripts remain at
+0 errors / 0 warnings / 0 info under this stricter configuration.
 
 ## Risk classification of the four scripts
 

@@ -5,7 +5,7 @@
 // File format : JSONC  (JSON with C-style line // and block /* */ comments)
 // Encoding    : UTF-8
 // Schema      : See https://github.com/usui-tk/ai-generated-artifacts/blob/main/scripts/python/powershell-static-analyzer/SPEC.md
-// Applies to  : psa.py 3.2.0 and later 3.x releases
+// Applies to  : psa.py 3.3.0 and later 3.x releases
 //
 // -----------------------------------------------------------------------------
 // What this config does (summary)
@@ -75,7 +75,16 @@
     // PSAP0002: enforce presence of the script-identity trio
     //   $Script:ScriptVersion / ScriptHash / ScriptShortTag
     // Used by all phase banners and the DebugTrace JSONL output.
-    "PSAP0002"
+    "PSAP0002",
+
+    // PSAP0003: detect inline revision-tag comments (# rNN:, # (rNN), ...)
+    // Per the repository-wide policy, revision history lives in
+    // CHANGELOG.md at the repository root, not in script bodies.
+    "PSAP0003",
+
+    // PSAP0004: detect in-script REVISION HISTORY / CHANGELOG /
+    // VERSION HISTORY comment blocks. Same rationale as PSAP0003.
+    "PSAP0004"
   ],
 
   "disable": [
