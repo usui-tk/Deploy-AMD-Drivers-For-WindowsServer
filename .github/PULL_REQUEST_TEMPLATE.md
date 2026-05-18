@@ -1,9 +1,14 @@
 <!--
 Thank you for your contribution! Please complete the sections below.
 
-Reminder: PowerShell scripts in this repository must pass `psa.py` with 0 errors
-(see SPEC.md §A.11 and CONTRIBUTING.md "Before opening a PR").
-English and Japanese documentation mirrors must be updated together (SPEC.md §A.12).
+Reminder: PowerShell scripts in this repository must pass `psa.py` with
+0 errors / 0 warnings / 0 info under the repository-shipped
+`.psa.config.json` (see SPEC.md §A.11 and CONTRIBUTING.md "Before
+opening a PR"). Per the repository-wide documentation language policy
+(SPEC.md §A.12), only `README.md` is bilingual (English master +
+`README.ja.md` translation); `SPEC.md`, `TESTING.md`, `CHANGELOG.md`,
+`CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md` are English
+only.
 -->
 
 ## Summary
@@ -19,7 +24,7 @@ Closes #
 - [ ] 🐛 Bug fix (non-breaking change which fixes an issue)
 - [ ] ✨ New feature (non-breaking change which adds functionality)
 - [ ] 💥 Breaking change (fix or feature that would cause existing behaviour to change)
-- [ ] 📖 Documentation update (`README.md` / `SPEC.md` / `TESTING.md` and/or Japanese mirrors)
+- [ ] 📖 Documentation update (`README.md` + `README.ja.md` and/or `SPEC.md` / `TESTING.md` / `CHANGELOG.md`)
 - [ ] 🔧 Build / static-analyzer / CI tooling change
 - [ ] 🧪 Test / validation report addition (`TESTING.md` §1 / §2 / §3 / §4)
 - [ ] 🆕 New sister script (e.g. ROCm runtime — see `SPEC.md` Appendix)
@@ -47,9 +52,10 @@ Closes #
 
 <!-- Per CONTRIBUTING.md "Before opening a PR" — tick every item before marking ready for review. -->
 
-- [ ] **Static analyzer**: `python3 psa.py <script>.ps1` returns 0 errors on every changed script (see [`SPEC.md` §A.11](../blob/main/SPEC.md#a11-static-analysis-with-psapy) for setup). Warnings/info match the baseline in [§A.11.5](../blob/main/SPEC.md#a115-documented-baseline-warnings-and-info); any drift is justified below.
+- [ ] **Static analyzer**: `python3 psa.py <script>.ps1 --config .psa.config.json` returns **0 errors / 0 warnings / 0 info** on every changed script (see [`SPEC.md` §A.11](../blob/main/SPEC.md#a11-static-analysis-with-psapy) for setup). The opt-in revision-discipline rules `PSAP0003` (inline `# rNN:` tags) and `PSAP0004` (end-of-file `REVISION HISTORY` blocks) must also remain clean if enabled. Any baseline drift is justified below.
 - [ ] **PrepareVerify smoke test**: `-Action PrepareVerify -CleanWorkRoot` completes without errors on a real Windows host with the target AMD consumer devices (or, for BthPan, a host with a bound Bluetooth controller). Log excerpt pasted below.
-- [ ] **Bilingual documentation sync**: every English doc change has a corresponding Japanese change in the same PR (`README.md` ↔ `README.ja.md`, `SPEC.md` ↔ `SPEC.ja.md`, `TESTING.md` ↔ `TESTING.ja.md`).
+- [ ] **README sync (the only bilingual document)**: any change to `README.md` has a corresponding update in `README.ja.md` in the same PR (English is the master). Per `SPEC.md` §A.12, no other doc has a Japanese counterpart.
+- [ ] **`CHANGELOG.md` entry**: every user-visible change has a corresponding entry under a new (or open `Unreleased`) version section in `CHANGELOG.md`, in the [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) format. **Do NOT put revision history into the script body** — `PSAP0003` / `PSAP0004` detect this anti-pattern.
 - [ ] **`SPEC.md` Part D entry**: for behaviour-breaking or non-obvious changes, a new §D.* entry documents the symptom, root cause, and rationale.
 - [ ] **PowerShell 5.1 compatibility**: no PS 7+ specific syntax (`??`, `?.`, ternary `?:`, etc.).
 - [ ] **No new external dependencies**: changes do not introduce reliance on third-party tools beyond the existing list (PowerShell standard library + `winget` for SDK/WDK install).

@@ -1,5 +1,5 @@
 name: 📖 Documentation issue
-description: Report a documentation problem (README / SPEC / TESTING / CONTRIBUTING — English or Japanese)
+description: Report a documentation problem (README / SPEC / TESTING / CHANGELOG / CONTRIBUTING etc.)
 title: "[Docs] "
 labels: ["documentation"]
 body:
@@ -8,7 +8,11 @@ body:
       value: |
         Thanks for helping improve the documentation! Please describe the problem precisely so the maintainer can fix it.
 
-        **Reminder**: the documentation is bilingual (English / Japanese mirrors). Per [`SPEC.md`](../blob/main/SPEC.md) §A.12, English and Japanese versions must be kept in sync. If you report a problem in one language, the maintainer will fix both.
+        **Documentation language policy** (see [`SPEC.md`](../blob/main/SPEC.md) §A.12):
+        - `README.md` is bilingual — English master + `README.ja.md` translation, kept in sync.
+        - `SPEC.md`, `TESTING.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` are **English only**.
+
+        If you report a problem in `README.md`, the maintainer will fix both English and Japanese versions together.
 
   - type: dropdown
     id: file
@@ -18,9 +22,8 @@ body:
         - "README.md"
         - "README.ja.md"
         - "SPEC.md"
-        - "SPEC.ja.md"
         - "TESTING.md"
-        - "TESTING.ja.md"
+        - "CHANGELOG.md"
         - "CONTRIBUTING.md"
         - "CODE_OF_CONDUCT.md"
         - "SECURITY.md"
@@ -45,7 +48,7 @@ body:
         - "Factual error (statement is wrong)"
         - "Broken anchor / cross-reference link"
         - "Outdated information (was correct, no longer is)"
-        - "Inconsistency between English / Japanese versions"
+        - "Inconsistency between README.md and README.ja.md"
         - "Missing information (something should be documented but isn't)"
         - "Ambiguity / unclear wording"
         - "Typo / grammar"
